@@ -1,14 +1,34 @@
 //! 'RsDict' data structure that supports both rank and select over a bitmap.
 //!
-//! From [Navarro and Providel, "Fast, Small, Simple Rank/Select On
-//! Bitmaps,"](https://users.dcc.uchile.cl/~gnavarro/ps/sea12.1.pdf), with
-//! heavy inspiration from a [Go implementation](https://github.com/hillbig/rsdic).
+//! This crate is an implementation of [Navarro and Providel, "Fast, Small,
+//! Simple Rank/Select On
+//! Bitmaps"](https://users.dcc.uchile.cl/~gnavarro/ps/sea12.1.pdf), with heavy
+//! inspiration from a [Go implementation](https://github.com/hillbig/rsdic).
 //!
-//! First, we store the bitmap in compressed form, where each block of 64 bits
-//! is stored with a variable length code, where the length is determined by the
+//! ```
+//! use rsdict::RsDict;
+//! use succinct::rank::RankSupport;
+//! use succinct::select::SelectSupport;
+//!
+//! let mut r = RsDict::new();
+//! r.push(false);
+//! r.push(true);
+//! r.push(true);
+//! r.push(false);
+//!
+//! // There's one bit set to the left of index 2.
+//! assert_eq!(r.rank(2, true), 1);
+//!
+//! // The index of the second (zero-indexed as 1) bit is 3.
+//! assert_eq!(r.select(1, false), Some(3));
+//! ```
+//!
+//! # Implementation notes
+//! First, we store the bitmap in compressed form.  Each block of 64 bits is
+//! stored with a variable length code, where the length is determined by the
 //! number of bits set in the block (its "class").  Then, we store the classes
-//! in a parallel array, allowing us to iterate forward from a pointer into the
-//! variable length buffer.
+//! (i.e. the number of bits set per block) in a separate array, allowing us to
+//! iterate forward from a pointer into the variable length buffer.
 //!
 //! To allow efficient indexing, we then break up the input into
 //! `LARGE_BLOCK_SIZE` blocks and store a pointer into the variable length
@@ -54,7 +74,7 @@ use self::constants::{
 };
 use self::enum_code::ENUM_CODE_LENGTH;
 
-/// Data structure for efficiently computing both rank and select queries.
+/// Data structure for efficiently computing both rank and select queries
 #[derive(Debug)]
 pub struct RsDict {
     len: u64,

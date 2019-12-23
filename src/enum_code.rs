@@ -87,18 +87,19 @@ pub fn rank(code: u64, class: u8, pos: u64) -> u64 {
     }
 }
 
+// Adapted from https://lemire.me/blog/2018/02/21/iterating-over-set-bits-quickly/
 pub fn select1_raw(mut code: u64, mut rank: u64) -> u64 {
-    let orig_code = code;
-    let orig_rank = rank;
-    while code != 0 {
-        let i = code.trailing_zeros();
+    debug_assert!(rank < code.count_ones() as u64);
+    for _ in 0..64 {
+        let t = code & code.wrapping_neg();
         if rank == 0 {
-            return i as u64;
+            return code.trailing_zeros() as u64;
         }
         rank -= 1;
-        code ^= 1 << i;
+        code ^= t;
     }
-    panic!("selected past end of codeword {} {}", orig_code, orig_rank);
+    debug_assert!(false, "select1_raw past end of codeword");
+    0
 }
 
 pub fn select1(mut code: u64, class: u8, mut rank: u64) -> u64 {

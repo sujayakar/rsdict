@@ -1,7 +1,14 @@
 [package]
 name = "rsdict"
-version = "0.1.0"
+version = "0.0.1"
 authors = ["Sujay Jayakar <sujayakar314@gmail.com>"]
+description = "Fast static rank and select data structure"
+repository = "https://github.com/sujayakar/rsdict"
+homepage = "https://github.com/sujayakar/rsdict"
+readme = "README.md"
+license = "MIT/Apache-2.0"
+keywords = ["rank", "select"]
+categories = ["data-structures"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

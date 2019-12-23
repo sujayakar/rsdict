@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use rsdict::RsDic;
+use rsdict::RsDict;
 use succinct::bit_vec::{BitVecPush, BitVector};
 use succinct::rank::{JacobsonRank, Rank9, RankSupport};
 use succinct::select::{BinSearchSelect, Select0Support, Select1Support};
@@ -41,8 +41,8 @@ where
 }
 
 fn bench_rank(c: &mut Criterion) {
-    bench_one_rank(c, "rsdic::rank", |bits| {
-        let mut rs_dict = RsDic::with_capacity(NUM_BITS);
+    bench_one_rank(c, "rsdict::rank", |bits| {
+        let mut rs_dict = RsDict::with_capacity(NUM_BITS);
         for b in bits.iter() {
             rs_dict.push(b);
         }
@@ -79,8 +79,8 @@ where
 }
 
 fn bench_select(c: &mut Criterion) {
-    bench_one_select(c, "rsdic", |bits| {
-        let mut rs_dict = RsDic::with_capacity(NUM_BITS);
+    bench_one_select(c, "rsdict", |bits| {
+        let mut rs_dict = RsDict::with_capacity(NUM_BITS);
         for b in bits.iter() {
             rs_dict.push(b);
         }

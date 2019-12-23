@@ -1,4 +1,4 @@
-//! 'RsDic' data structure that supports both rank and select over a bitmap.
+//! 'RsDict' data structure that supports both rank and select over a bitmap.
 //!
 //! From [Navarro and Providel, "Fast, Small, Simple Rank/Select On
 //! Bitmaps,"](https://users.dcc.uchile.cl/~gnavarro/ps/sea12.1.pdf), with
@@ -56,7 +56,7 @@ use self::enum_code::ENUM_CODE_LENGTH;
 
 /// Data structure for efficiently computing both rank and select queries.
 #[derive(Debug)]
-pub struct RsDic {
+pub struct RsDict {
     len: u64,
     num_ones: u64,
     num_zeros: u64,
@@ -84,7 +84,7 @@ pub struct RsDic {
     last_block: LastBlock,
 }
 
-impl RankSupport for RsDic {
+impl RankSupport for RsDict {
     type Over = bool;
 
     fn rank(&self, pos: u64, bit: bool) -> u64 {
@@ -129,7 +129,7 @@ impl RankSupport for RsDic {
     }
 }
 
-impl BitRankSupport for RsDic {
+impl BitRankSupport for RsDict {
     fn rank1(&self, pos: u64) -> u64 {
         self.rank(pos, true)
     }
@@ -139,7 +139,7 @@ impl BitRankSupport for RsDic {
     }
 }
 
-impl SelectSupport for RsDic {
+impl SelectSupport for RsDict {
     type Over = bool;
 
     fn select(&self, rank: u64, bit: bool) -> Option<u64> {
@@ -151,7 +151,7 @@ impl SelectSupport for RsDic {
     }
 }
 
-impl Select0Support for RsDic {
+impl Select0Support for RsDict {
     fn select0(&self, rank: u64) -> Option<u64> {
         if rank >= self.num_zeros {
             return None;
@@ -206,7 +206,7 @@ impl Select0Support for RsDic {
     }
 }
 
-impl Select1Support for RsDic {
+impl Select1Support for RsDict {
     fn select1(&self, rank: u64) -> Option<u64> {
         if rank >= self.num_ones {
             return None;
@@ -251,13 +251,13 @@ impl Select1Support for RsDic {
     }
 }
 
-impl RsDic {
-    /// Create a new `RsDic` with zero capacity.
+impl RsDict {
+    /// Create a new `RsDict` with zero capacity.
     pub fn new() -> Self {
         Self::with_capacity(0)
     }
 
-    /// Create a new `RsDic` with the given capacity preallocated.
+    /// Create a new `RsDict` with the given capacity preallocated.
     pub fn with_capacity(n: usize) -> Self {
         Self {
             large_blocks: Vec::with_capacity(n / LARGE_BLOCK_SIZE as usize),
@@ -365,7 +365,7 @@ impl RsDic {
     }
 }
 
-impl RsDic {
+impl RsDict {
     fn write_block(&mut self) {
         if self.len > 0 {
             let block = mem::replace(&mut self.last_block, LastBlock::new());
@@ -410,7 +410,7 @@ impl RsDic {
     }
 }
 
-impl SpaceUsage for RsDic {
+impl SpaceUsage for RsDict {
     fn is_stack_only() -> bool {
         false
     }
@@ -554,14 +554,14 @@ fn rank_by_bit(x: u64, n: u64, b: bool) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::RsDic;
+    use super::RsDict;
     use crate::test_helpers::hash_u64;
     use succinct::rank::RankSupport;
     use succinct::select::SelectSupport;
 
     // Ask quickcheck to generate blocks of 64 bits so we get test
     // coverage for ranges spanning multiple small blocks.
-    fn test_rsdic(blocks: Vec<u64>) -> (Vec<bool>, RsDic) {
+    fn test_rsdict(blocks: Vec<u64>) -> (Vec<bool>, RsDict) {
         let mut bits = Vec::with_capacity(blocks.len() * 64);
         let to_pop = blocks.get(0).unwrap_or(&0) % 64;
         for block in blocks {
@@ -574,7 +574,7 @@ mod tests {
         for _ in 0..to_pop {
             bits.pop();
         }
-        let mut rs_dict = RsDic::with_capacity(bits.len());
+        let mut rs_dict = RsDict::with_capacity(bits.len());
         for &bit in &bits {
             rs_dict.push(bit);
         }
@@ -583,7 +583,7 @@ mod tests {
 
     #[quickcheck]
     fn qc_rank(blocks: Vec<u64>) {
-        let (bits, rs_dict) = test_rsdic(blocks);
+        let (bits, rs_dict) = test_rsdict(blocks);
 
         let mut one_rank = 0;
         let mut zero_rank = 0;
@@ -602,7 +602,7 @@ mod tests {
 
     #[quickcheck]
     fn qc_select(blocks: Vec<u64>) {
-        let (bits, rs_dict) = test_rsdic(blocks);
+        let (bits, rs_dict) = test_rsdict(blocks);
 
         let mut one_rank = 0usize;
         let mut zero_rank = 0usize;
@@ -629,7 +629,7 @@ mod tests {
 
     #[quickcheck]
     fn qc_get_bit(blocks: Vec<u64>) {
-        let (bits, rs_dict) = test_rsdic(blocks);
+        let (bits, rs_dict) = test_rsdict(blocks);
         for (i, &bit) in bits.iter().enumerate() {
             assert_eq!(rs_dict.get_bit(i as u64), bit);
         }
@@ -638,7 +638,7 @@ mod tests {
     #[quickcheck]
     fn qc_bit_and_one_rank(blocks: Vec<u64>) {
         let mut one_rank = 0;
-        let (bits, rs_dict) = test_rsdic(blocks);
+        let (bits, rs_dict) = test_rsdict(blocks);
         for (i, &bit) in bits.iter().enumerate() {
             let (rs_bit, rs_rank) = rs_dict.bit_and_one_rank(i as u64);
             assert_eq!((rs_bit, rs_rank), (bit, one_rank));

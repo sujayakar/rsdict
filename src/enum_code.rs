@@ -57,7 +57,8 @@ pub fn decode_bit(mut code: u64, class: u8, pos: u64) -> bool {
     code >= BINOMIAL_COEFFICIENTS[n as usize][k as usize]
 }
 
-pub fn rank(mut code: u64, class: u8, pos: u64) -> u64 {
+#[inline(always)]
+fn rank_impl(mut code: u64, class: u8, pos: u64) -> u64 {
     if ENUM_CODE_LENGTH[class as usize] == SMALL_BLOCK_SIZE as u8 {
         return (code & ((1 << pos) - 1)).count_ones() as u64;
     }
@@ -71,6 +72,19 @@ pub fn rank(mut code: u64, class: u8, pos: u64) -> u64 {
         }
     }
     (class - cur_rank) as u64
+}
+
+#[target_feature(enable = "popcnt")]
+unsafe fn rank_with_popcount(code: u64, class: u8, pos: u64) -> u64 {
+    rank_impl(code, class, pos)
+}
+
+pub fn rank(code: u64, class: u8, pos: u64) -> u64 {
+    if is_x86_feature_detected!("popcnt") {
+        unsafe { rank_with_popcount(code, class, pos) }
+    } else {
+        rank_impl(code, class, pos)
+    }
 }
 
 pub fn select1_raw(mut code: u64, mut rank: u64) -> u64 {

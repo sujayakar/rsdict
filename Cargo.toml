@@ -16,3 +16,8 @@ features = ["into_bits"]
 quickcheck = "0.9.0"
 quickcheck_macros = "0.8.0"
 criterion = "0.3"
+rand = "0.7"
+
+[[bench]]
+name = "rank_select"
+harness = false

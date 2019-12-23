@@ -13,16 +13,16 @@ use packed_simd::{
     u64x2,
 };
 
-/// Scan a prefix of a large block of small block classes, returning the
-/// sum of the classes and their total encoded length.
-///
-/// Preconditions:
-/// * start <= end <= start + 16
-/// * classes[start] must be 128-bit aligned
-///
-/// Returns:
-/// * class_sum: classes[start..end].sum()
-/// * length_sum: classes[start.end].map(|i| ENUM_CODE_LENGTH[i]).sum()
+// Scan a prefix of a large block of small block classes, returning the
+// sum of the classes and their total encoded length.
+//
+// Preconditions:
+// * start <= end <= start + 16
+// * classes[start] must be 128-bit aligned
+//
+// Returns:
+// * class_sum: classes[start..end].sum()
+// * length_sum: classes[start.end].map(|i| ENUM_CODE_LENGTH[i]).sum()
 pub fn scan_block(classes: &[u8], start: usize, end: usize) -> (u64, u64) {
     if is_x86_feature_detected!("ssse3") {
         unsafe { scan_block_ssse3(classes, start, end) }

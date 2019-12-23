@@ -1,17 +1,9 @@
 use super::enum_code::ENUM_CODE_LENGTH;
 
-use std::arch::x86_64::{
-    __m128i,
-    _mm_sad_epu8,
-};
-use std::u64;
+use packed_simd::{u64x2, u8x16, FromBits, IntoBits};
+use std::arch::x86_64::{__m128i, _mm_sad_epu8};
 use std::slice;
-use packed_simd::{
-    FromBits,
-    IntoBits,
-    u8x16,
-    u64x2,
-};
+use std::u64;
 
 // Scan a prefix of a large block of small block classes, returning the
 // sum of the classes and their total encoded length.
@@ -71,7 +63,9 @@ unsafe fn scan_block_ssse3(classes: &[u8], start: usize, end: usize) -> (u64, u6
     //
     //    ENUM_CODE_LENGTH[i] == ENUM_CODE_LENGTH[f(i)] for i in [0, 64].
     //
-    let indices = classes.min(u8x16::splat(64) - classes).min(u8x16::splat(15));
+    let indices = classes
+        .min(u8x16::splat(64) - classes)
+        .min(u8x16::splat(15));
     const ENUM_CODE_VECTOR: u8x16 = u8x16::new(
         ENUM_CODE_LENGTH[0],
         ENUM_CODE_LENGTH[1],
@@ -119,6 +113,6 @@ fn scan_block_naive(classes: &[u8], start: usize, end: usize) -> (u64, u64) {
 unsafe fn sum_u8x16(xs: u8x16) -> u64 {
     let zero_m128: __m128i = u8x16::splat(0).into_bits();
     let xs_m128: __m128i = xs.into_bits();
-    let sum_m128 =  _mm_sad_epu8(zero_m128, xs_m128);
+    let sum_m128 = _mm_sad_epu8(zero_m128, xs_m128);
     u64x2::from_bits(sum_m128).wrapping_sum()
 }

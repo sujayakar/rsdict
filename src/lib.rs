@@ -45,26 +45,14 @@ mod rank_acceleration;
 #[cfg(test)]
 mod test_helpers;
 
-use succinct::rank::{
-    RankSupport,
-    BitRankSupport,
-};
-use succinct::select::{
-    SelectSupport,
-    Select1Support,
-    Select0Support,
-};
+use succinct::rank::{BitRankSupport, RankSupport};
+use succinct::select::{Select0Support, Select1Support, SelectSupport};
 use succinct::SpaceUsage;
 
 use self::constants::{
-    SMALL_BLOCK_SIZE,
-    LARGE_BLOCK_SIZE,
-    SELECT_BLOCK_SIZE,
-    SMALL_BLOCK_PER_LARGE_BLOCK,
+    LARGE_BLOCK_SIZE, SELECT_BLOCK_SIZE, SMALL_BLOCK_PER_LARGE_BLOCK, SMALL_BLOCK_SIZE,
 };
-use self::enum_code::{
-    ENUM_CODE_LENGTH,
-};
+use self::enum_code::ENUM_CODE_LENGTH;
 
 /// Data structure for efficiently computing both rank and select queries.
 #[derive(Debug)]
@@ -112,17 +100,17 @@ impl RankSupport for RsDic {
 
         // Start with the rank from our position's large block.
         let lblock = pos / LARGE_BLOCK_SIZE;
-        let LargeBlock { mut pointer, mut rank } = self.large_blocks[lblock as usize];
+        let LargeBlock {
+            mut pointer,
+            mut rank,
+        } = self.large_blocks[lblock as usize];
 
         // Add in the ranks (i.e. the classes) per small block up to our
         // position's small block.
         let sblock_start = (lblock * SMALL_BLOCK_PER_LARGE_BLOCK) as usize;
         let sblock = (pos / SMALL_BLOCK_SIZE) as usize;
-        let (class_sum, length_sum) = rank_acceleration::scan_block(
-            &self.sb_classes,
-            sblock_start,
-            sblock,
-        );
+        let (class_sum, length_sum) =
+            rank_acceleration::scan_block(&self.sb_classes, sblock_start, sblock);
         rank += class_sum;
         pointer += length_sum;
 
@@ -155,7 +143,11 @@ impl SelectSupport for RsDic {
     type Over = bool;
 
     fn select(&self, rank: u64, bit: bool) -> Option<u64> {
-        if bit { self.select1(rank) } else { self.select0(rank) }
+        if bit {
+            self.select1(rank)
+        } else {
+            self.select0(rank)
+        }
     }
 }
 
@@ -355,7 +347,10 @@ impl RsDic {
         let lblock = pos / LARGE_BLOCK_SIZE;
         let sblock = (pos / SMALL_BLOCK_SIZE) as usize;
         let sblock_start = (lblock * SMALL_BLOCK_PER_LARGE_BLOCK) as usize;
-        let LargeBlock { mut pointer, mut rank } = self.large_blocks[lblock as usize];
+        let LargeBlock {
+            mut pointer,
+            mut rank,
+        } = self.large_blocks[lblock as usize];
         for &sb_class in &self.sb_classes[sblock_start..sblock] {
             pointer += ENUM_CODE_LENGTH[sb_class as usize] as u64;
             rank += sb_class as u64;
@@ -384,7 +379,8 @@ impl RsDic {
             // `sb_classes`.
             let num_sb = self.sb_classes.len();
             let align = SMALL_BLOCK_PER_LARGE_BLOCK as usize;
-            self.sb_classes.reserve((num_sb + align - 1) / align * align);
+            self.sb_classes
+                .reserve((num_sb + align - 1) / align * align);
 
             let (code_len, code) = enum_code::encode(block.bits, sb_class);
             self.sb_indices.push(code_len as usize, code);
@@ -420,11 +416,11 @@ impl SpaceUsage for RsDic {
     }
 
     fn heap_bytes(&self) -> usize {
-        self.sb_indices.heap_bytes() +
-            self.sb_classes.heap_bytes() +
-            self.large_blocks.heap_bytes() +
-            self.select_one_inds.heap_bytes() +
-            self.select_zero_inds.heap_bytes()
+        self.sb_indices.heap_bytes()
+            + self.sb_classes.heap_bytes()
+            + self.large_blocks.heap_bytes()
+            + self.select_one_inds.heap_bytes()
+            + self.select_zero_inds.heap_bytes()
     }
 }
 
@@ -477,7 +473,10 @@ impl VarintBuffer {
     fn get(&self, index: usize, num_bits: usize) -> u64 {
         debug_assert!(num_bits <= 64);
         let (block, offset) = (index / 64, index % 64);
-        let mask = 1u64.checked_shl(num_bits as u32).unwrap_or(0).wrapping_sub(1);
+        let mask = 1u64
+            .checked_shl(num_bits as u32)
+            .unwrap_or(0)
+            .wrapping_sub(1);
         let mut ret = (self.buf[block] >> offset) & mask;
         if offset + num_bits > 64 {
             ret |= self.buf[block + 1] << (64 - offset);
@@ -546,15 +545,19 @@ impl LastBlock {
 }
 
 fn rank_by_bit(x: u64, n: u64, b: bool) -> u64 {
-    if b { x } else { n - x }
+    if b {
+        x
+    } else {
+        n - x
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::RsDic;
+    use crate::test_helpers::hash_u64;
     use succinct::rank::RankSupport;
     use succinct::select::SelectSupport;
-    use crate::test_helpers::hash_u64;
 
     // Ask quickcheck to generate blocks of 64 bits so we get test
     // coverage for ranges spanning multiple small blocks.

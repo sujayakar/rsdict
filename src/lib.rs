@@ -272,6 +272,118 @@ impl Select1Support for RsDict {
 }
 
 impl RsDict {
+    /// Create a dictionary from a bitset, specified as an iterator of 64-bit
+    /// blocks.  This function is equivalent to pushing each bit one at a time but
+    /// is much faster.
+    pub fn from_blocks(blocks: impl Iterator<Item = u64>) -> Self {
+        if is_x86_feature_detected!("popcnt") {
+            unsafe { Self::from_blocks_popcount(blocks) }
+        } else {
+            Self::from_blocks_impl(blocks)
+        }
+    }
+
+    #[target_feature(enable = "popcnt")]
+    unsafe fn from_blocks_popcount(blocks: impl Iterator<Item = u64>) -> Self {
+        Self::from_blocks_impl(blocks)
+    }
+
+    #[inline(always)]
+    fn from_blocks_impl(blocks: impl Iterator<Item = u64>) -> Self {
+        let (_, hint) = blocks.size_hint();
+        let hint = hint.unwrap_or(0);
+
+        let mut large_blocks = Vec::with_capacity(hint / LARGE_BLOCK_SIZE as usize);
+        let mut select_one_inds = Vec::with_capacity(hint / SELECT_BLOCK_SIZE as usize);
+        let mut select_zero_inds = Vec::with_capacity(hint / SELECT_BLOCK_SIZE as usize);
+        let mut sb_classes = Vec::with_capacity(hint / SMALL_BLOCK_SIZE as usize);
+        let mut sb_indices = VarintBuffer::with_capacity(hint);
+        let mut last_block = LastBlock::new();
+
+        let mut num_ones = 0;
+        let mut num_zeros = 0;
+
+        let mut iter = blocks.enumerate().peekable();
+
+        while let Some((i, block)) = iter.next() {
+            let sb_class = block.count_ones() as u8;
+
+            if i as u64 % SMALL_BLOCK_PER_LARGE_BLOCK == 0 {
+                let lblock = LargeBlock {
+                    rank: num_ones,
+                    pointer: sb_indices.len() as u64,
+                };
+                large_blocks.push(lblock);
+            }
+
+            // If we're on the last block, write to `last_block` rather than
+            // pushing onto the `VarintBuffer`.
+            if iter.peek().is_none() {
+                last_block.bits = block;
+                last_block.num_ones = sb_class as u64;
+                last_block.num_zeros = 64 - sb_class as u64;
+            } else {
+                sb_classes.push(sb_class);
+                let (code_len, code) = enum_code::encode(block, sb_class);
+                sb_indices.push(code_len as usize, code);
+            }
+
+            let lb_start = i as u64 * SMALL_BLOCK_SIZE / LARGE_BLOCK_SIZE;
+
+            // We want to see if there's any j in [num_ones, num_ones + sb_class) such
+            // that j % SELECT_BLOCK_SIZE = 0.  We can do this arithmetically by
+            // comparing two divisors:
+            //
+            // 1. (num_ones - 1) / SELECT_BLOCK_SIZE and
+            // 2. (num_ones + sb_class - 1) / SELECT_BLOCK_SIZE.
+            //
+            // If they're not equal, there must be a multiple of SELECT_BLOCK_SIZE in
+            // the interval [num_ones, num_ones + sb_class).  To see why, consider
+            // the case where sb_class > 0 and SELECT_BLOCK_SIZE divides num_ones.
+            // Then, the first divisor's numerator is one less than a multiple, and
+            // the second one must be greater than or equal to it.  Similarly, if the
+            // last value num_ones + sb_class - 1 is a multiple, then the first divsior
+            // must be less than the second.  Then, since sb_class < SELECT_BLOCK_SIZE,
+            // the same argument holds for any divisor in the middle.
+            //
+            // Finally, since we're working with unsigned integers, add SELECT_BLOCK_SIZE
+            // to both numerators so we don't ever underflow when subtracting one.
+            let start = num_ones + SELECT_BLOCK_SIZE - 1;
+            let end = num_ones + SELECT_BLOCK_SIZE + sb_class as u64 - 1;
+            if start / SELECT_BLOCK_SIZE != end / SELECT_BLOCK_SIZE {
+                select_one_inds.push(lb_start);
+            }
+
+            // Now do the same for the zero indices.
+            let start = num_zeros + SELECT_BLOCK_SIZE - 1;
+            let end = num_zeros + SELECT_BLOCK_SIZE + (64 - sb_class as u64) - 1;
+            if start / SELECT_BLOCK_SIZE != end / SELECT_BLOCK_SIZE {
+                select_zero_inds.push(lb_start);
+            }
+
+            num_ones += sb_class as u64;
+            num_zeros += 64 - sb_class as u64;
+        }
+
+        let num_sb = sb_classes.len();
+        let align = SMALL_BLOCK_PER_LARGE_BLOCK as usize;
+        sb_classes.reserve((num_sb + align - 1) / align * align);
+
+        Self {
+            large_blocks,
+            select_one_inds,
+            select_zero_inds,
+            sb_classes,
+            sb_indices,
+
+            len: num_ones + num_zeros,
+            num_ones,
+            num_zeros,
+
+            last_block,
+        }
+    }
+
     /// Create a new `RsDict` with zero capacity.
     pub fn new() -> Self {
         Self::with_capacity(0)
@@ -444,7 +556,7 @@ impl SpaceUsage for RsDict {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 struct LargeBlock {
     pointer: u64,
     rank: u64,
@@ -460,7 +572,7 @@ impl SpaceUsage for LargeBlock {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 struct VarintBuffer {
     buf: Vec<u64>,
     len: usize,
@@ -519,7 +631,7 @@ impl SpaceUsage for VarintBuffer {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 struct LastBlock {
     bits: u64,
     num_ones: u64,
@@ -585,10 +697,14 @@ mod tests {
         let mut bits = Vec::with_capacity(blocks.len() * 64);
         let to_pop = blocks.get(0).unwrap_or(&0) % 64;
         for block in blocks {
-            let block = hash_u64(block);
-            for i in 0..64 {
-                let bit = (block >> i) & 1 != 0;
-                bits.push(bit);
+            for i in 0..4 {
+                let block = hash_u64(block.wrapping_add(i));
+                if block % 2 != 0 {
+                    for j in 0..64 {
+                        let bit = (block >> j) & 1 != 0;
+                        bits.push(bit);
+                    }
+                }
             }
         }
         for _ in 0..to_pop {
@@ -599,6 +715,34 @@ mod tests {
             rs_dict.push(bit);
         }
         (bits, rs_dict)
+    }
+
+    #[quickcheck]
+    fn qc_from_blocks(blocks: Vec<u64>) {
+        let (bits, rs_dict) = test_rsdict(blocks);
+        let blocks = (0..(bits.len() / 64)).map(|i| {
+            let mut block = 0u64;
+            for j in 0..64 {
+                if bits[i * 64 + j] {
+                    block |= 1 << j;
+                }
+            }
+            block
+        });
+        let mut block_rs_dict = RsDict::from_blocks(blocks);
+        for i in (bits.len() / 64 * 64)..bits.len() {
+            block_rs_dict.push(bits[i]);
+        }
+
+        assert_eq!(rs_dict.len, block_rs_dict.len);
+        assert_eq!(rs_dict.num_ones, block_rs_dict.num_ones);
+        assert_eq!(rs_dict.num_zeros, block_rs_dict.num_zeros);
+        assert_eq!(rs_dict.sb_classes, block_rs_dict.sb_classes);
+        assert_eq!(rs_dict.sb_indices, block_rs_dict.sb_indices);
+        assert_eq!(rs_dict.large_blocks, block_rs_dict.large_blocks);
+        assert_eq!(rs_dict.select_one_inds, block_rs_dict.select_one_inds);
+        assert_eq!(rs_dict.select_zero_inds, block_rs_dict.select_zero_inds);
+        assert_eq!(rs_dict.last_block, block_rs_dict.last_block);
     }
 
     #[quickcheck]

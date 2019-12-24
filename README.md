@@ -56,3 +56,15 @@ Found 9 outliers among 100 measurements (9.00%)
 So for rank queries, this implementation is faster than `succinct-rs`'s Jacobson and slightly slower
 than its Rank9.  However for select queries, it's *much* faster than doing binary search over these 
 rank structures, so consider using this library if you perform many selects.
+
+## Testing
+We generally use QuickCheck for testing data structure invariants.  In addition, there's basic AFL fuzz integration
+to find interesting test cases using program coverage.  Install [cargo-afl](https://github.com/rust-fuzz/afl.rs) 
+and run the `rsdict_fuzz` binary with the `fuzz` feature set.
+```
+$ cargo install afl
+$ cargo afl build --release --bin rsdict_fuzz --features fuzz
+
+# Create some starting bitsets within target/fuzz/in
+$ cargo afl fuzz -i target/fuzz/in -o target/fuzz/out target/release/rsdict_fuzz
+```

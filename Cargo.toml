@@ -11,13 +11,25 @@ keywords = ["rank", "select"]
 categories = ["data-structures"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[profile.release]
+overflow-checks = true
+debug-assertions = true
+debug = true
+
+[features]
+default = []
+fuzz = ["afl"]
+
 [dependencies]
 succinct = "0.5.2"
 
 [dependencies.packed_simd]
 version = "0.3"
 features = ["into_bits"]
+
+[dependencies.afl]
+version = "0.5.2"
+optional = true
 
 [dev-dependencies]
 quickcheck = "0.9.0"
@@ -28,3 +40,8 @@ rand = "0.7"
 [[bench]]
 name = "rank_select"
 harness = false
+
+[[bin]]
+name = "rsdict_fuzz"
+path = "src/rsdict_fuzz.rs"
+required-features = ["fuzz"]

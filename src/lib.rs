@@ -604,6 +604,9 @@ impl VarintBuffer {
 
     fn get(&self, index: usize, num_bits: usize) -> u64 {
         debug_assert!(num_bits <= 64);
+        if num_bits == 0 {
+            return 0;
+        }
         let (block, offset) = (index / 64, index % 64);
         let mask = 1u64
             .checked_shl(num_bits as u32)

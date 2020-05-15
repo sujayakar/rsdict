@@ -7,8 +7,6 @@
 //!
 //! ```
 //! use rsdict::RsDict;
-//! use succinct::rank::RankSupport;
-//! use succinct::select::SelectSupport;
 //!
 //! let mut r = RsDict::new();
 //! r.push(false);
@@ -65,10 +63,6 @@ mod rank_acceleration;
 #[cfg(test)]
 mod test_helpers;
 
-use succinct::rank::{BitRankSupport, RankSupport};
-use succinct::select::{Select0Support, Select1Support, SelectSupport};
-use succinct::SpaceUsage;
-
 use self::constants::{
     LARGE_BLOCK_SIZE, SELECT_BLOCK_SIZE, SMALL_BLOCK_PER_LARGE_BLOCK, SMALL_BLOCK_SIZE,
 };
@@ -104,12 +98,12 @@ pub struct RsDict {
     last_block: LastBlock,
 }
 
-impl RankSupport for RsDict {
-    type Over = bool;
-
-    fn rank(&self, pos: u64, bit: bool) -> u64 {
+impl RsDict {
+    /// Non-inclusive rank: Count the number of `bit` values left of `pos`. Panics if `pos` is
+    /// out-of-bounds.
+    pub fn rank(&self, pos: u64, bit: bool) -> u64 {
         if pos >= self.len {
-            return rank_by_bit(self.num_ones, self.len, bit);
+            panic!("Out of bounds position: {} >= {}", pos, self.len);
         }
         // If we're in the last block, count the number of ones set after our
         // bit in the last block and remove that from the global count.
@@ -144,35 +138,59 @@ impl RankSupport for RsDict {
         rank_by_bit(rank, pos, bit)
     }
 
-    fn limit(&self) -> u64 {
-        self.len
+    /// Query the `pos`th bit (zero-indexed) of the underlying bit and the number of set bits to the
+    /// left of `pos` in a single operation.  This method is faster than calling `get_bit(pos)` and
+    /// `rank(pos, true)` separately.
+    pub fn bit_and_one_rank(&self, pos: u64) -> (bool, u64) {
+        if pos >= self.len {
+            panic!("Out of bounds position: {} >= {}", pos, self.len);
+        }
+        if self.is_last_block(pos) {
+            let sb_pos = pos % SMALL_BLOCK_SIZE;
+            let bit = self.last_block.get_bit(sb_pos);
+            let after_rank = self.last_block.count_suffix(sb_pos);
+            return (bit, self.num_ones - after_rank);
+        }
+        let lblock = pos / LARGE_BLOCK_SIZE;
+        let sblock = (pos / SMALL_BLOCK_SIZE) as usize;
+        let sblock_start = (lblock * SMALL_BLOCK_PER_LARGE_BLOCK) as usize;
+        let LargeBlock {
+            mut pointer,
+            mut rank,
+        } = self.large_blocks[lblock as usize];
+        for &sb_class in &self.sb_classes[sblock_start..sblock] {
+            pointer += ENUM_CODE_LENGTH[sb_class as usize] as u64;
+            rank += sb_class as u64;
+        }
+        let sb_class = self.sb_classes[sblock];
+        let code_length = ENUM_CODE_LENGTH[sb_class as usize];
+        let code = self.read_sb_index(pointer, code_length);
+
+        rank += enum_code::rank(code, sb_class, pos % SMALL_BLOCK_SIZE);
+        let bit = enum_code::decode_bit(code, sb_class, pos % SMALL_BLOCK_SIZE);
+        (bit, rank)
     }
-}
 
-impl BitRankSupport for RsDict {
-    fn rank1(&self, pos: u64) -> u64 {
-        self.rank(pos, true)
+    /// Inclusive rank: Count the number of `bit` values at indices less than or equal to
+    /// `pos`. Panics if `pos` is out-of-bounds.
+    pub fn inclusive_rank(&self, pos: u64, bit: bool) -> u64 {
+        let (pos_bit, one_rank) = self.bit_and_one_rank(pos);
+        rank_by_bit(one_rank, pos, bit) + if pos_bit == bit { 1 } else { 0 }
     }
 
-    fn rank0(&self, pos: u64) -> u64 {
-        self.rank(pos, false)
-    }
-}
 
-impl SelectSupport for RsDict {
-    type Over = bool;
-
-    fn select(&self, rank: u64, bit: bool) -> Option<u64> {
+    /// Compute the position of the `rank`th instance of `bit` (zero-indexed), returning `None` if
+    /// there are not `rank + 1` instances of `bit` in the array.
+    pub fn select(&self, rank: u64, bit: bool) -> Option<u64> {
         if bit {
             self.select1(rank)
         } else {
             self.select0(rank)
         }
     }
-}
 
-impl Select0Support for RsDict {
-    fn select0(&self, rank: u64) -> Option<u64> {
+    /// Specialized version of [RsDict::select] for finding positions of zeros.
+    pub fn select0(&self, rank: u64) -> Option<u64> {
         if rank >= self.num_zeros {
             return None;
         }
@@ -224,9 +242,8 @@ impl Select0Support for RsDict {
         }
         panic!("Ran out of small blocks when iterating over rank");
     }
-}
 
-impl Select1Support for RsDict {
+    /// Specialized version of [RsDict::select] for finding positions of ones.
     fn select1(&self, rank: u64) -> Option<u64> {
         if rank >= self.num_ones {
             return None;
@@ -269,12 +286,9 @@ impl Select1Support for RsDict {
         }
         panic!("Ran out of small blocks when iterating over rank");
     }
-}
 
-impl RsDict {
-    /// Create a dictionary from a bitset, specified as an iterator of 64-bit
-    /// blocks.  This function is equivalent to pushing each bit one at a time but
-    /// is much faster.
+    /// Create a dictionary from a bitset, specified as an iterator of 64-bit blocks.  This function
+    /// is equivalent to pushing each bit one at a time but is much faster.
     pub fn from_blocks(blocks: impl Iterator<Item = u64>) -> Self {
         if is_x86_feature_detected!("popcnt") {
             unsafe { Self::from_blocks_popcount(blocks) }
@@ -465,39 +479,6 @@ impl RsDict {
         enum_code::decode_bit(code, sb_class, pos % SMALL_BLOCK_SIZE)
     }
 
-    /// Query the `pos`th bit (zero-indexed) of the underlying bit and the
-    /// number of set bits to the left of `pos` in a single operation.  This
-    /// method is faster than calling `get_bit(pos)` and `rank(pos, true)`
-    /// separately.
-    pub fn bit_and_one_rank(&self, pos: u64) -> (bool, u64) {
-        if self.is_last_block(pos) {
-            let sb_pos = pos % SMALL_BLOCK_SIZE;
-            let bit = self.last_block.get_bit(sb_pos);
-            let after_rank = self.last_block.count_suffix(sb_pos);
-            return (bit, self.num_ones - after_rank);
-        }
-        let lblock = pos / LARGE_BLOCK_SIZE;
-        let sblock = (pos / SMALL_BLOCK_SIZE) as usize;
-        let sblock_start = (lblock * SMALL_BLOCK_PER_LARGE_BLOCK) as usize;
-        let LargeBlock {
-            mut pointer,
-            mut rank,
-        } = self.large_blocks[lblock as usize];
-        for &sb_class in &self.sb_classes[sblock_start..sblock] {
-            pointer += ENUM_CODE_LENGTH[sb_class as usize] as u64;
-            rank += sb_class as u64;
-        }
-        let sb_class = self.sb_classes[sblock];
-        let code_length = ENUM_CODE_LENGTH[sb_class as usize];
-        let code = self.read_sb_index(pointer, code_length);
-
-        rank += enum_code::rank(code, sb_class, pos % SMALL_BLOCK_SIZE);
-        let bit = enum_code::decode_bit(code, sb_class, pos % SMALL_BLOCK_SIZE);
-        (bit, rank)
-    }
-}
-
-impl RsDict {
     fn write_block(&mut self) {
         if self.len > 0 {
             let block = mem::replace(&mut self.last_block, LastBlock::new());
@@ -542,34 +523,10 @@ impl RsDict {
     }
 }
 
-impl SpaceUsage for RsDict {
-    fn is_stack_only() -> bool {
-        false
-    }
-
-    fn heap_bytes(&self) -> usize {
-        self.sb_indices.heap_bytes()
-            + self.sb_classes.heap_bytes()
-            + self.large_blocks.heap_bytes()
-            + self.select_one_inds.heap_bytes()
-            + self.select_zero_inds.heap_bytes()
-    }
-}
-
 #[derive(Debug, Eq, PartialEq)]
 struct LargeBlock {
     pointer: u64,
     rank: u64,
-}
-
-impl SpaceUsage for LargeBlock {
-    fn is_stack_only() -> bool {
-        true
-    }
-
-    fn heap_bytes(&self) -> usize {
-        0
-    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -621,16 +578,6 @@ impl VarintBuffer {
 
     fn len(&self) -> usize {
         self.len
-    }
-}
-
-impl SpaceUsage for VarintBuffer {
-    fn is_stack_only() -> bool {
-        false
-    }
-
-    fn heap_bytes(&self) -> usize {
-        self.buf.heap_bytes()
     }
 }
 
@@ -691,8 +638,6 @@ fn rank_by_bit(x: u64, n: u64, b: bool) -> u64 {
 mod tests {
     use super::RsDict;
     use crate::test_helpers::hash_u64;
-    use succinct::rank::RankSupport;
-    use succinct::select::SelectSupport;
 
     // Ask quickcheck to generate blocks of 64 bits so we get test
     // coverage for ranges spanning multiple small blocks.

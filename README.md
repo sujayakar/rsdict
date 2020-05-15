@@ -11,7 +11,7 @@ for building many different succinct data structures.  See Navarro's book on [Co
 This library ports the Go implementation to Rust and adds a few optimizations.  First, the final phase
 of computing a rank involves scanning over the compressed bitmap, decompressing it one block at a time
 and keeping a running total of set bits.  For CPUs with SSSE3 support, this library performs this final
-step without looping by using vectorized instructions.  Second, we use optimized routes for computing
+step without looping by using vectorized instructions.  Second, we use optimized routines for computing
 `rank` and `select` within a single `u64`.  Rank uses `popcnt`, if available, and select implements
 [this algorithm](https://lemire.me/blog/2018/02/21/iterating-over-set-bits-quickly/) to quickly skip over
 unset bits.

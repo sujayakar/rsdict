@@ -1,6 +1,6 @@
 [package]
 name = "rsdict"
-version = "0.0.3"
+version = "0.0.4"
 authors = ["Sujay Jayakar <sujayakar314@gmail.com>"]
 description = "Fast static rank and select data structure"
 repository = "https://github.com/sujayakar/rsdict"
@@ -24,7 +24,8 @@ simd = ["packed_simd"]
 [dependencies]
 
 [dependencies.packed_simd]
-version = "0.3"
+package = "packed_simd_2"
+version = "0.3.4"
 features = ["into_bits"]
 optional = true
 

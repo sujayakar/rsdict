@@ -69,7 +69,7 @@ use self::constants::{
 use self::enum_code::ENUM_CODE_LENGTH;
 
 /// Data structure for efficiently computing both rank and select queries
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RsDict {
     len: u64,
     num_ones: u64,
@@ -523,13 +523,13 @@ impl RsDict {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 struct LargeBlock {
     pointer: u64,
     rank: u64,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 struct VarintBuffer {
     buf: Vec<u64>,
     len: usize,
@@ -581,7 +581,7 @@ impl VarintBuffer {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 struct LastBlock {
     bits: u64,
     num_ones: u64,

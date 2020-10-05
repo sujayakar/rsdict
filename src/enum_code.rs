@@ -73,15 +73,25 @@ pub fn decode_bit(mut code: u64, class: u8, pos: u64) -> bool {
     }
     let mut k = class;
     for i in 0..(pos as u8) {
-        let n = SMALL_BLOCK_SIZE as u8 - i - 1;
-        let zero_case_num = binomial_coefficient(n, k);
+        let n = SMALL_BLOCK_SIZE as u8 - i;
+        let zero_case_num = 
+            if n > k {
+                binomial_coefficient(n as u8 - 1, k as u8)
+            } else {
+                0
+            };
         if code >= zero_case_num {
             code -= zero_case_num;
             k -= 1;
         }
     }
-    let n = SMALL_BLOCK_SIZE - pos - 1;
-    code >= binomial_coefficient(n as u8, k)
+    let n = SMALL_BLOCK_SIZE  - pos;
+    code >= 
+        if n > k as u64 {
+            binomial_coefficient(n as u8 - 1, k as u8)
+        } else {
+            0
+        }
 }
 
 #[inline(always)]
@@ -135,8 +145,14 @@ pub fn select1(mut code: u64, class: u8, mut rank: u64) -> u64 {
     }
     let mut k = class;
     for i in 0..SMALL_BLOCK_SIZE {
-        let n = SMALL_BLOCK_SIZE - i - 1;
-        let zero_case_num = binomial_coefficient(n as u8, k as u8);
+        let n = SMALL_BLOCK_SIZE - i;
+        let zero_case_num = 
+            if n > k as u64 {
+                binomial_coefficient(n as u8 - 1, k as u8)
+            } else {
+                0
+            };
+
         if code >= zero_case_num {
             if rank == 0 {
                 return i;

@@ -39,6 +39,7 @@ quickcheck_macros = "0.8.0"
 criterion = "0.3"
 rand = "0.7"
 succinct = "0.5.2"
+fid = "0.1.7"
 
 [[bench]]
 name = "rank_select"

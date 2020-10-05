@@ -18,6 +18,44 @@ fn binomial_coefficient(n: u8, k: u8) -> u64 {
     COEFFICIENT_TABLE[row_start + k]
 }
 
+// Let's say we're coding a bitstring of `n` bits, where `k` of them are set. There are `n` choose
+// `k` different bitstrings of this form, so we'd like to map our bitstring to an integer in the
+// range
+//
+//    [0, binomial_coefficient(n, k)).
+//
+// If `n == k == 0`, then `binomial_coefficient(0, 0) = 1`, so we must return zero as our coded
+// value. Let's assume that `n > 0`, so the bitstring in nonempty with a first "head" bits and
+// the remaining `n - 1` tail bits. Compute our code inductively on the tail bits. We'd like to
+// transform this coded value in some way to be able to also recover the head bit when decoding.
+//
+// If `n == k` or `k == 0`, the bitstring must be all ones or zeros, respectively. So, we know
+// upfront what the head bit must be, so we don't need to emit any new information, and we can
+// return the tail's coded value.
+//
+// If `0 < k < n`, the head bit may either be zero or one. If it's zero, the range of the coded
+// tail is `[0, binomial_coefficient(n - 1, k))`, since there are `k` bits in the tail. If the
+// head bit is set, the tail's range is `[0, binomial_coefficient(n - 1, k - 1))`. We can code
+// our head bit by gluing these two ranges together, creating a final value in
+// `[0, binomial_coefficient(n - 1, k) + binomial_coefficient(n - 1, k - 1))`.
+//
+//
+//     [ binomial_coefficient(n - 1, k) ][ binomial_coefficient(n - 1, k - 1) ]
+//              head bit is zero         ^         head bit is one
+//                                 zero_case_count
+//
+// Then, `zero_case_count` indicates the start of the region where the head bit is one or,
+// alternatively, the number of different tail bitstrings where the head bit is zero. If `n == k`,
+// `zero_case_count` must be zero since it's impossible for the first bit to be zero.
+//
+fn zero_case_count(n: u8, k: u8) -> u64 {
+    if n == k {
+        0
+    } else {
+        binomial_coefficient(n - 1, k)
+    }
+}
+
 pub fn encode(value: u64, class: u8) -> (u8, u64) {
     debug_assert_eq!(value.count_ones() as u8, class);
     let code_len = ENUM_CODE_LENGTH[class as usize];
@@ -32,9 +70,7 @@ pub fn encode(value: u64, class: u8) -> (u8, u64) {
     for i in 0..(SMALL_BLOCK_SIZE as u8) {
         let n = SMALL_BLOCK_SIZE as u8 - i;
         if (value >> i) & 1 != 0 {
-            if n > k {
-                code += binomial_coefficient(n - 1, k);
-            }
+            code += zero_case_count(n, k);
             k -= 1;
         }
     }
@@ -50,17 +86,10 @@ pub fn decode(mut code: u64, class: u8) -> u64 {
     let mut k = class;
     for i in 0..(SMALL_BLOCK_SIZE as u8) {
         let n = SMALL_BLOCK_SIZE as u8 - i;
-        if n > k {
-            let zero_case_num = binomial_coefficient(n - 1, k);
-            if code >= zero_case_num {
-                value |= 1 << i;
-                code -= zero_case_num;
-                k -= 1;
-            }
-        }
-        // If `n == k`, this bit must be set.
-        else {
+        let z = zero_case_count(n, k);
+        if code >= z {
             value |= 1 << i;
+            code -= z;
             k -= 1;
         }
     }
@@ -73,15 +102,16 @@ pub fn decode_bit(mut code: u64, class: u8, pos: u64) -> bool {
     }
     let mut k = class;
     for i in 0..(pos as u8) {
-        let n = SMALL_BLOCK_SIZE as u8 - i - 1;
-        let zero_case_num = binomial_coefficient(n, k);
-        if code >= zero_case_num {
-            code -= zero_case_num;
+        let n = SMALL_BLOCK_SIZE as u8 - i;
+        let z = zero_case_count(n, k);
+        if code >= z {
+            code -= z;
             k -= 1;
         }
     }
-    let n = SMALL_BLOCK_SIZE - pos - 1;
-    code >= binomial_coefficient(n as u8, k)
+
+    let n = SMALL_BLOCK_SIZE - pos;
+    code >= zero_case_count(n as u8, k)
 }
 
 #[inline(always)]
@@ -91,10 +121,10 @@ fn rank_impl(mut code: u64, class: u8, pos: u64) -> u64 {
     }
     let mut cur_rank = class;
     for i in 0..pos {
-        let n = SMALL_BLOCK_SIZE - i - 1;
-        let zero_case_num = binomial_coefficient(n as u8, cur_rank);
-        if code >= zero_case_num {
-            code -= zero_case_num;
+        let n = SMALL_BLOCK_SIZE - i;
+        let z = zero_case_count(n as u8, cur_rank);
+        if code >= z {
+            code -= z;
             cur_rank -= 1;
         }
     }
@@ -135,14 +165,14 @@ pub fn select1(mut code: u64, class: u8, mut rank: u64) -> u64 {
     }
     let mut k = class;
     for i in 0..SMALL_BLOCK_SIZE {
-        let n = SMALL_BLOCK_SIZE - i - 1;
-        let zero_case_num = binomial_coefficient(n as u8, k as u8);
-        if code >= zero_case_num {
+        let n = SMALL_BLOCK_SIZE - i;
+        let z = zero_case_count(n as u8, k as u8);
+        if code >= z {
             if rank == 0 {
                 return i;
             }
             rank -= 1;
-            code -= zero_case_num;
+            code -= z;
             k -= 1;
         }
     }
@@ -156,10 +186,10 @@ pub fn select0(mut code: u64, class: u8, mut rank: u64) -> u64 {
     }
     let mut k = class as usize;
     for i in 0..SMALL_BLOCK_SIZE {
-        let n = SMALL_BLOCK_SIZE - i - 1;
-        let zero_case_num = binomial_coefficient(n as u8, k as u8);
-        if code >= zero_case_num {
-            code -= zero_case_num;
+        let n = SMALL_BLOCK_SIZE - i;
+        let z = zero_case_count(n as u8, k as u8);
+        if code >= z {
+            code -= z;
             k -= 1;
         } else {
             if rank == 0 {
@@ -179,76 +209,55 @@ mod tests {
     use crate::test_helpers::hash_u64;
     use succinct::broadword;
 
-    fn check_roundtrip(value: u64) -> bool {
+    fn check_value(value: u64) -> bool {
         let class = value.count_ones() as u8;
         let (_, code) = encode(value, class);
-        decode(code, class) == value
-    }
 
-    #[test]
-    fn test_encode() {
-        for i in 0..64 {
-            check_roundtrip(std::u64::MAX << i);
-        }
-        check_roundtrip(0);
-    }
-
-    #[quickcheck]
-    fn qc_decode(value: u64) -> bool {
-        check_roundtrip(value)
-    }
-
-    #[quickcheck]
-    fn qc_decode_hashed(value: u64) -> bool {
-        check_roundtrip(hash_u64(value))
-    }
-
-    #[quickcheck]
-    fn qc_decode_bit(value: u64) -> bool {
-        let value = hash_u64(value);
-        let class = value.count_ones() as u8;
-        let (_, code) = encode(value, class);
-        (0..64).all(|i| {
+        let decoded = decode(code, class) == value;
+        let decode_bit = (0..64).all(|i| {
             let computed = decode_bit(code, class, i);
             let expected = (value >> i) & 1 != 0;
             computed == expected
-        })
-    }
-
-    #[quickcheck]
-    fn qc_rank(value: u64) -> bool {
-        let value = hash_u64(value);
-        let class = value.count_ones() as u8;
-        let (_, code) = encode(value, class);
-        (0..64).all(|i| {
+        });
+        let rank = (0..64).all(|i| {
             let computed = rank(code, class, i);
             let expected = (value & ((1 << i) - 1)).count_ones() as u64;
             computed == expected
-        })
-    }
-
-    #[quickcheck]
-    fn qc_select0(value: u64) -> bool {
-        let value = hash_u64(value);
-        let class = value.count_ones() as u8;
-        let (_, code) = encode(value, class);
-        (0..(64 - class) as u64).all(|i| {
+        });
+        let select0 = (0..(64 - class) as u64).all(|i| {
             let computed = select0(code, class, i) as usize;
             let expected = broadword::select1_raw(i as usize, !value);
             computed == expected
-        })
-    }
-
-    #[quickcheck]
-    fn qc_select1(value: u64) -> bool {
-        let value = hash_u64(value);
-        let class = value.count_ones() as u8;
-        let (_, code) = encode(value, class);
-        (0..class as u64).all(|i| {
+        });
+        let select1 = (0..class as u64).all(|i| {
             let computed = select1(code, class, i) as usize;
             let expected = broadword::select1_raw(i as usize, value);
             computed == expected
-        })
+        });
+
+        decoded
+            && decode_bit
+            && rank
+            && select0
+            && select1
+    }
+
+    #[test]
+    fn test_enum_code() {
+        for i in 0..64 {
+            assert!(check_value(std::u64::MAX << i));
+        }
+        assert!(check_value(0));
+    }
+
+    #[quickcheck]
+    fn qc_enum_code(value: u64) -> bool {
+        check_value(value)
+    }
+
+    #[quickcheck]
+    fn qc_enum_code_hashed(value: u64) -> bool {
+        check_value(hash_u64(value))
     }
 
     #[test]

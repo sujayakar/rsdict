@@ -639,9 +639,7 @@ mod tests {
     use super::RsDict;
     use crate::test_helpers::hash_u64;
 
-    // Ask quickcheck to generate blocks of 64 bits so we get test
-    // coverage for ranges spanning multiple small blocks.
-    fn test_rsdict(blocks: Vec<u64>) -> (Vec<bool>, RsDict) {
+    fn hash_u64_blocks(blocks: &[u64]) -> Vec<bool> {
         let mut bits = Vec::with_capacity(blocks.len() * 64);
         let to_pop = blocks.get(0).unwrap_or(&0) % 64;
         for block in blocks {
@@ -658,16 +656,73 @@ mod tests {
         for _ in 0..to_pop {
             bits.pop();
         }
+        bits
+    }
+
+    fn check_rsdict(bits: &[bool]) {
         let mut rs_dict = RsDict::with_capacity(bits.len());
-        for &bit in &bits {
+        for &bit in bits {
             rs_dict.push(bit);
         }
-        (bits, rs_dict)
+
+        // Check that rank(i) matches our naively computed ranks for all indices.
+        let mut one_rank = 0;
+        let mut zero_rank = 0;
+        for (i, &inp_bit) in bits.iter().enumerate() {
+            assert_eq!(rs_dict.rank(i as u64, false), zero_rank);
+            assert_eq!(rs_dict.rank(i as u64, true), one_rank);
+            if inp_bit {
+                one_rank += 1;
+            } else {
+                zero_rank += 1;
+            }
+        }
+
+        // Check `select(r)` for ranks "in bounds" within the bitvector against
+        // our naively computed ranks.
+        let mut one_rank = 0;
+        let mut zero_rank = 0;
+        for (i, &inp_bit) in bits.iter().enumerate() {
+            if inp_bit {
+                assert_eq!(rs_dict.select(one_rank as u64, true), Some(i as u64));
+                one_rank += 1;
+            } else {
+                assert_eq!(rs_dict.select(zero_rank as u64, false), Some(i as u64));
+                zero_rank += 1;
+            }
+        }
+        // Check all of the "out of bounds" ranks up until `bits.len()`.
+        for r in (one_rank + 1)..bits.len() {
+            assert_eq!(rs_dict.select(r as u64, true), None);
+        }
+        for r in (zero_rank + 1)..bits.len() {
+            assert_eq!(rs_dict.select(r as u64, false), None);
+        }
+
+        // Check that we can query all of the bits back out.
+        for (i, &bit) in bits.iter().enumerate() {
+            assert_eq!(rs_dict.get_bit(i as u64), bit);
+        }
+
+        // Check our combined bit and rank method.
+        let mut one_rank = 0;
+        for (i, &bit) in bits.iter().enumerate() {
+            let (rs_bit, rs_rank) = rs_dict.bit_and_one_rank(i as u64);
+            assert_eq!((rs_bit, rs_rank), (bit, one_rank));
+            if bit {
+                one_rank += 1;
+            }
+        }
+
     }
 
     #[quickcheck]
     fn qc_from_blocks(blocks: Vec<u64>) {
-        let (bits, rs_dict) = test_rsdict(blocks);
+        let bits = hash_u64_blocks(&blocks);
+        let mut rs_dict = RsDict::with_capacity(bits.len());
+        for &bit in &bits {
+            rs_dict.push(bit);
+        }
         let blocks = (0..(bits.len() / 64)).map(|i| {
             let mut block = 0u64;
             for j in 0..64 {
@@ -693,70 +748,34 @@ mod tests {
         assert_eq!(rs_dict.last_block, block_rs_dict.last_block);
     }
 
+    // Ask quickcheck to generate blocks of 64 bits so we get test
+    // coverage for ranges spanning multiple small blocks.
     #[quickcheck]
-    fn qc_rank(blocks: Vec<u64>) {
-        let (bits, rs_dict) = test_rsdict(blocks);
-
-        let mut one_rank = 0;
-        let mut zero_rank = 0;
-
-        // Check that rank(i) matches our naively computed ranks for all indices
-        for (i, &inp_bit) in bits.iter().enumerate() {
-            assert_eq!(rs_dict.rank(i as u64, false), zero_rank);
-            assert_eq!(rs_dict.rank(i as u64, true), one_rank);
-            if inp_bit {
-                one_rank += 1;
-            } else {
-                zero_rank += 1;
-            }
-        }
+    fn qc_rsdict(blocks: Vec<u64>) {
+        check_rsdict(&hash_u64_blocks(&blocks));
     }
 
-    #[quickcheck]
-    fn qc_select(blocks: Vec<u64>) {
-        let (bits, rs_dict) = test_rsdict(blocks);
 
-        let mut one_rank = 0usize;
-        let mut zero_rank = 0usize;
+    #[test]
+    fn test_large_rsdicts() {
+        check_rsdict(&[true; 65]);
+        check_rsdict(&[true; 1025]);
+        check_rsdict(&[true; 3121]);
+        check_rsdict(&[true; 3185]);
+        check_rsdict(&[true; 4097]);
+        check_rsdict(&[true; 8193]);
 
-        // Check `select(r)` for ranks "in bounds" within the bitvector against
-        // our naively computed ranks.
-        for (i, &inp_bit) in bits.iter().enumerate() {
-            if inp_bit {
-                assert_eq!(rs_dict.select(one_rank as u64, true), Some(i as u64));
-                one_rank += 1;
-            } else {
-                assert_eq!(rs_dict.select(zero_rank as u64, false), Some(i as u64));
-                zero_rank += 1;
-            }
-        }
-        // Check all of the "out of bounds" ranks up until `bits.len()`
-        for r in (one_rank + 1)..bits.len() {
-            assert_eq!(rs_dict.select(r as u64, true), None);
-        }
-        for r in (zero_rank + 1)..bits.len() {
-            assert_eq!(rs_dict.select(r as u64, false), None);
-        }
-    }
+        check_rsdict(&[false; 65]);
+        check_rsdict(&[false; 1025]);
+        check_rsdict(&[false; 3121]);
+        check_rsdict(&[false; 3185]);
+        check_rsdict(&[false; 4097]);
+        check_rsdict(&[false; 8193]);
 
-    #[quickcheck]
-    fn qc_get_bit(blocks: Vec<u64>) {
-        let (bits, rs_dict) = test_rsdict(blocks);
-        for (i, &bit) in bits.iter().enumerate() {
-            assert_eq!(rs_dict.get_bit(i as u64), bit);
+        let alternating = &mut [false; 8193];
+        for i in 0..8193 {
+            alternating[i] = i % 2 == 0;
         }
-    }
-
-    #[quickcheck]
-    fn qc_bit_and_one_rank(blocks: Vec<u64>) {
-        let mut one_rank = 0;
-        let (bits, rs_dict) = test_rsdict(blocks);
-        for (i, &bit) in bits.iter().enumerate() {
-            let (rs_bit, rs_rank) = rs_dict.bit_and_one_rank(i as u64);
-            assert_eq!((rs_bit, rs_rank), (bit, one_rank));
-            if bit {
-                one_rank += 1;
-            }
-        }
+        check_rsdict(alternating);
     }
 }

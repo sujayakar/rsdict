@@ -53,6 +53,7 @@ extern crate quickcheck;
 #[macro_use(quickcheck)]
 extern crate quickcheck_macros;
 
+use std::cmp::Ordering;
 use std::mem;
 
 mod constants;
@@ -69,7 +70,7 @@ use self::constants::{
 use self::enum_code::ENUM_CODE_LENGTH;
 
 /// Data structure for efficiently computing both rank and select queries
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RsDict {
     len: u64,
     num_ones: u64,
@@ -479,6 +480,29 @@ impl RsDict {
         enum_code::decode_bit(code, sb_class, pos % SMALL_BLOCK_SIZE)
     }
 
+    /// Iterate over the bits in the bitset.
+    pub fn iter(&self) -> impl Iterator<Item = bool> + '_ {
+        struct RsDictIter<'a> {
+            rsdict: &'a RsDict,
+            pos: u64,
+        }
+        impl<'a> Iterator for RsDictIter<'a> {
+            type Item = bool;
+
+            fn next(&mut self) -> Option<bool> {
+                if self.pos >= self.rsdict.len {
+                    return None;
+                }
+                // TODO: We could optimize this to read in a block once rather than decoding a bit
+                // at a time.
+                let out = self.rsdict.get_bit(self.pos);
+                self.pos += 1;
+                Some(out)
+            }
+        }
+        RsDictIter { rsdict: self, pos: 0 }
+    }
+
     fn write_block(&mut self) {
         if self.len > 0 {
             let block = mem::replace(&mut self.last_block, LastBlock::new());
@@ -523,13 +547,33 @@ impl RsDict {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+impl PartialEq for RsDict {
+    fn eq(&self, rhs: &Self) -> bool {
+        self.iter().eq(rhs.iter())
+    }
+}
+
+impl Eq for RsDict {}
+
+impl PartialOrd for RsDict {
+    fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
+        self.iter().partial_cmp(rhs.iter())
+    }
+}
+
+impl Ord for RsDict {
+    fn cmp(&self, rhs: &Self) -> Ordering {
+        self.iter().cmp(rhs.iter())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct LargeBlock {
     pointer: u64,
     rank: u64,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct VarintBuffer {
     buf: Vec<u64>,
     len: usize,
@@ -581,7 +625,7 @@ impl VarintBuffer {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct LastBlock {
     bits: u64,
     num_ones: u64,
@@ -714,6 +758,11 @@ mod tests {
             }
         }
 
+        // Check that iteration matches.
+        assert!(bits.iter().cloned().eq(rs_dict.iter()));
+
+        // Check that equality is reflexive.
+        assert_eq!(bits, bits)
     }
 
     #[quickcheck]
@@ -777,5 +826,14 @@ mod tests {
             alternating[i] = i % 2 == 0;
         }
         check_rsdict(alternating);
+    }
+
+    #[test]
+    fn test_ordering() {
+        let r1 = RsDict::from_blocks([0u64].iter().cloned());
+        let r2 = RsDict::from_blocks([1u64].iter().cloned());
+
+        assert_ne!(r1, r2);
+        assert!(r1 < r2);
     }
 }

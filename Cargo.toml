@@ -1,6 +1,6 @@
 [package]
 name = "rsdict"
-version = "0.0.2"
+version = "0.0.3"
 authors = ["Sujay Jayakar <sujayakar314@gmail.com>"]
 description = "Fast static rank and select data structure"
 repository = "https://github.com/sujayakar/rsdict"

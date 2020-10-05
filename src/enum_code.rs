@@ -30,9 +30,11 @@ pub fn encode(value: u64, class: u8) -> (u8, u64) {
     let mut code = 0u64;
     let mut k = class;
     for i in 0..(SMALL_BLOCK_SIZE as u8) {
+        let n = SMALL_BLOCK_SIZE as u8 - i;
         if (value >> i) & 1 != 0 {
-            let n = (SMALL_BLOCK_SIZE as u8 - i) - 1;
-            code += binomial_coefficient(n, k);
+            if n > k {
+                code += binomial_coefficient(n - 1, k);
+            }
             k -= 1;
         }
     }
@@ -47,11 +49,18 @@ pub fn decode(mut code: u64, class: u8) -> u64 {
     let mut value = 0u64;
     let mut k = class;
     for i in 0..(SMALL_BLOCK_SIZE as u8) {
-        let n = SMALL_BLOCK_SIZE as u8 - i - 1;
-        let zero_case_num = binomial_coefficient(n, k);
-        if code >= zero_case_num {
+        let n = SMALL_BLOCK_SIZE as u8 - i;
+        if n > k {
+            let zero_case_num = binomial_coefficient(n - 1, k);
+            if code >= zero_case_num {
+                value |= 1 << i;
+                code -= zero_case_num;
+                k -= 1;
+            }
+        }
+        // If `n == k`, this bit must be set.
+        else {
             value |= 1 << i;
-            code -= zero_case_num;
             k -= 1;
         }
     }
@@ -170,12 +179,28 @@ mod tests {
     use crate::test_helpers::hash_u64;
     use succinct::broadword;
 
-    #[quickcheck]
-    fn qc_decode(value: u64) -> bool {
-        let value = hash_u64(value);
+    fn check_roundtrip(value: u64) -> bool {
         let class = value.count_ones() as u8;
         let (_, code) = encode(value, class);
         decode(code, class) == value
+    }
+
+    #[test]
+    fn test_encode() {
+        for i in 0..64 {
+            check_roundtrip(std::u64::MAX << i);
+        }
+        check_roundtrip(0);
+    }
+
+    #[quickcheck]
+    fn qc_decode(value: u64) -> bool {
+        check_roundtrip(value)
+    }
+
+    #[quickcheck]
+    fn qc_decode_hashed(value: u64) -> bool {
+        check_roundtrip(hash_u64(value))
     }
 
     #[quickcheck]

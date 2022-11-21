@@ -110,6 +110,15 @@ impl RsDict {
         }
     }
 
+    /// Return the size of the heap allocations associated with the `RsDict`.
+    pub fn heap_size(&self) -> usize {
+        self.sb_classes.capacity() * mem::size_of::<u8>()
+            + self.sb_indices.heap_size()
+            + self.large_blocks.capacity() * mem::size_of::<LargeBlock>()
+            + self.select_one_inds.capacity() * mem::size_of::<u64>()
+            + self.select_zero_inds.capacity() * mem::size_of::<u64>()
+    }
+
     #[target_feature(enable = "popcnt")]
     unsafe fn from_blocks_popcount(blocks: impl Iterator<Item = u64>) -> Self {
         Self::from_blocks_impl(blocks)
@@ -618,6 +627,10 @@ impl VarintBuffer {
             ret |= self.buf[block + 1] << (64 - offset);
         }
         ret & mask
+    }
+
+    fn heap_size(&self) -> usize {
+        self.buf.capacity() * mem::size_of::<u64>()
     }
 
     fn len(&self) -> usize {

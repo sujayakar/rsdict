@@ -103,11 +103,13 @@ impl RsDict {
     /// Create a dictionary from a bitset, specified as an iterator of 64-bit blocks.  This function
     /// is equivalent to pushing each bit one at a time but is much faster.
     pub fn from_blocks(blocks: impl Iterator<Item = u64>) -> Self {
-        if is_x86_feature_detected!("popcnt") {
-            unsafe { Self::from_blocks_popcount(blocks) }
-        } else {
-            Self::from_blocks_impl(blocks)
+        #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+        {
+            if is_x86_feature_detected!("popcnt") {
+                return unsafe { Self::from_blocks_popcount(blocks) };
+            }
         }
+        Self::from_blocks_impl(blocks)
     }
 
     /// Return the size of the heap allocations associated with the `RsDict`.
@@ -119,6 +121,7 @@ impl RsDict {
             + self.select_zero_inds.capacity() * mem::size_of::<u64>()
     }
 
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     #[target_feature(enable = "popcnt")]
     unsafe fn from_blocks_popcount(blocks: impl Iterator<Item = u64>) -> Self {
         Self::from_blocks_impl(blocks)
@@ -321,7 +324,6 @@ impl RsDict {
         rank_by_bit(one_rank, pos, bit) + if pos_bit == bit { 1 } else { 0 }
     }
 
-
     /// Compute the position of the `rank`th instance of `bit` (zero-indexed), returning `None` if
     /// there are not `rank + 1` instances of `bit` in the array.
     pub fn select(&self, rank: u64, bit: bool) -> Option<u64> {
@@ -509,7 +511,10 @@ impl RsDict {
                 Some(out)
             }
         }
-        RsDictIter { rsdict: self, pos: 0 }
+        RsDictIter {
+            rsdict: self,
+            pos: 0,
+        }
     }
 
     fn write_block(&mut self) {
@@ -816,7 +821,6 @@ mod tests {
     fn qc_rsdict(blocks: Vec<u64>) {
         check_rsdict(&hash_u64_blocks(&blocks));
     }
-
 
     #[test]
     fn test_large_rsdicts() {

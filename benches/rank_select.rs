@@ -20,13 +20,13 @@ fn random_bits(len: usize) -> BitVector<u64> {
 
 fn random_indices(count: usize, range: usize) -> Vec<usize> {
     let mut rng = StdRng::seed_from_u64(SEED);
-    (0..count).map(|_| rng.gen_range(0, range)).collect()
+    (0..count).map(|_| rng.gen_range(0..range)).collect()
 }
 
-
 fn bench_one_rank<T, F, G>(c: &mut Criterion, name: &str, create: F, rank: G)
-    where F: FnOnce(BitVector<u64>) -> T,
-          G: Fn(&T, u64) -> u64
+where
+    F: FnOnce(BitVector<u64>) -> T,
+    G: Fn(&T, u64) -> u64,
 {
     let r = create(random_bits(NUM_BITS));
     let indices = random_indices(1000, NUM_BITS);
@@ -50,27 +50,19 @@ fn bench_rank(c: &mut Criterion) {
             }
             rs_dict
         },
-        |r, i| r.rank(i, true)
+        |r, i| r.rank(i, true),
     );
-    bench_one_rank(
-        c,
-        "jacobson::rank",
-        JacobsonRank::new,
-        |r, i| r.rank(i, true)
-    );
-    bench_one_rank(
-        c,
-        "rank9::rank",
-        Rank9::new,
-        |r, i| r.rank(i, true)
-    );
+    bench_one_rank(c, "jacobson::rank", JacobsonRank::new, |r, i| {
+        r.rank(i, true)
+    });
+    bench_one_rank(c, "rank9::rank", Rank9::new, |r, i| r.rank(i, true));
 }
 
 fn bench_one_select<T, F, G, H>(c: &mut Criterion, name: &str, create: F, select0: G, select1: H)
 where
     F: Fn(BitVector<u64>) -> T,
     G: Fn(&T, u64) -> Option<u64>,
-    H: Fn(&T, u64) -> Option<u64>
+    H: Fn(&T, u64) -> Option<u64>,
 {
     let bits = random_bits(NUM_BITS);
     let num_set = bits.iter().filter(|&b| b).count();

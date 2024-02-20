@@ -10,17 +10,15 @@ fn scan_block_naive(classes: &[u8], start: usize, end: usize) -> (u64, u64) {
     (class_sum, length_sum)
 }
 
-#[cfg(not(all(feature = "simd", target_arch="x86_64")))]
-pub fn scan_block(classes: &[u8], start: usize, end: usize) -> (u64, u64) {
-    scan_block_naive(classes, start, end)
-}
+#[cfg(not(all(feature = "simd", target_arch = "x86_64")))]
+pub fn scan_block(classes: &[u8], start: usize, end: usize) -> (u64, u64) { scan_block_naive(classes, start, end) }
 
-#[cfg(all(feature = "simd", target_arch="x86_64"))]
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 mod accelerated {
     use super::scan_block_naive;
     use crate::enum_code::ENUM_CODE_LENGTH;
-    use packed_simd::{u64x2, u8x16, FromBits, IntoBits};
-    use std::arch::x86_64::{__m128i, _mm_sad_epu8};
+    use std::arch::x86_64::{__m128i, _mm_sad_epu8, _mm_setzero_si128};
+    use std::simd::{num::SimdUint, u64x2, u8x16, Simd};
     use std::slice;
     use std::u64;
 
@@ -58,14 +56,13 @@ mod accelerated {
         // Step 1b: Do the same for the remaining 8 bytes.
         let hi_shift = len.saturating_sub(8) as u32 * 8;
         let hi_mask = !u64::MAX.checked_shl(hi_shift).unwrap_or(0);
-        let ix_mask = u8x16::from_bits(u64x2::new(lo_mask, hi_mask));
+        let ix_mask: u8x16 = core::mem::transmute(u64x2::from([lo_mask, hi_mask]));
 
         let classes = {
             let start = classes.as_ptr().offset(start as isize);
             let block = slice::from_raw_parts(start, 16);
 
-            // This does bounds and alignment checks in debug builds.
-            let block = u8x16::from_slice_aligned_unchecked(block);
+            let block = u8x16::from_slice(block);
             block & ix_mask
         };
 
@@ -82,32 +79,18 @@ mod accelerated {
         //
         //    ENUM_CODE_LENGTH[i] == ENUM_CODE_LENGTH[f(i)] for i in [0, 64].
         //
-        let indices = classes
-            .min(u8x16::splat(64) - classes)
-            .min(u8x16::splat(15));
-        const ENUM_CODE_VECTOR: u8x16 = u8x16::new(
-            ENUM_CODE_LENGTH[0],
-            ENUM_CODE_LENGTH[1],
-            ENUM_CODE_LENGTH[2],
-            ENUM_CODE_LENGTH[3],
-            ENUM_CODE_LENGTH[4],
-            ENUM_CODE_LENGTH[5],
-            ENUM_CODE_LENGTH[6],
-            ENUM_CODE_LENGTH[7],
-            ENUM_CODE_LENGTH[8],
-            ENUM_CODE_LENGTH[9],
-            ENUM_CODE_LENGTH[10],
-            ENUM_CODE_LENGTH[11],
-            ENUM_CODE_LENGTH[12],
-            ENUM_CODE_LENGTH[13],
-            ENUM_CODE_LENGTH[14],
-            ENUM_CODE_LENGTH[15],
-        );
+        let indices = classes.min(u8x16::splat(64) - classes).min(u8x16::splat(15));
+        let enum_code_vector: u8x16 = u8x16::from([
+            ENUM_CODE_LENGTH[0], ENUM_CODE_LENGTH[1], ENUM_CODE_LENGTH[2], ENUM_CODE_LENGTH[3],
+            ENUM_CODE_LENGTH[4], ENUM_CODE_LENGTH[5], ENUM_CODE_LENGTH[6], ENUM_CODE_LENGTH[7],
+            ENUM_CODE_LENGTH[8], ENUM_CODE_LENGTH[9], ENUM_CODE_LENGTH[10], ENUM_CODE_LENGTH[11],
+            ENUM_CODE_LENGTH[12], ENUM_CODE_LENGTH[13], ENUM_CODE_LENGTH[14], ENUM_CODE_LENGTH[15],
+        ]);
 
         // Step 3: This is the real magic.  Now that we've packed our table into
         // a vector and transformed our classes into indices into this packed vector,
         // we can use `pshufb` to index into our table in parallel.
-        let code_lengths = ENUM_CODE_VECTOR.shuffle1_dyn(indices);
+        let code_lengths = Simd::swizzle_dyn(enum_code_vector, indices);
 
         // Step 4: Compute our sums and return.
         let class_sum = sum_u8x16(classes);
@@ -116,17 +99,15 @@ mod accelerated {
         (class_sum, length_sum)
     }
 
-
-
-    // Unfortunately, `packed_simd` doesn't support `psadbw` yet, which is a
+    // In case `std::simd` supports `psadbw`, that could be a
     // great way to sum a u8x16 into a u64x2 in a single SSE2 instruction.
     unsafe fn sum_u8x16(xs: u8x16) -> u64 {
-        let zero_m128: __m128i = u8x16::splat(0).into_bits();
-        let xs_m128: __m128i = xs.into_bits();
+        let zero_m128: __m128i = _mm_setzero_si128();
+        let xs_m128: __m128i = __m128i::from(xs);
         let sum_m128 = _mm_sad_epu8(zero_m128, xs_m128);
-        u64x2::from_bits(sum_m128).wrapping_sum()
+        u64x2::from(sum_m128).reduce_sum()
     }
 }
 
-#[cfg(all(feature = "simd", target_arch="x86_64"))]
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 pub use self::accelerated::scan_block;

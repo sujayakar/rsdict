@@ -19,6 +19,7 @@ mod accelerated {
     use crate::enum_code::ENUM_CODE_LENGTH;
     use std::arch::x86_64::{__m128i, _mm_sad_epu8, _mm_setzero_si128};
     use std::simd::{num::SimdUint, u64x2, u8x16, Simd};
+    use std::simd::prelude::SimdOrd;
     use std::slice;
     use std::u64;
 
@@ -79,7 +80,7 @@ mod accelerated {
         //
         //    ENUM_CODE_LENGTH[i] == ENUM_CODE_LENGTH[f(i)] for i in [0, 64].
         //
-        let indices = classes.min(u8x16::splat(64) - classes).min(u8x16::splat(15));
+        let indices = classes.simd_min(u8x16::splat(64) - classes).simd_min(u8x16::splat(15));
         let enum_code_vector: u8x16 = u8x16::from([
             ENUM_CODE_LENGTH[0], ENUM_CODE_LENGTH[1], ENUM_CODE_LENGTH[2], ENUM_CODE_LENGTH[3],
             ENUM_CODE_LENGTH[4], ENUM_CODE_LENGTH[5], ENUM_CODE_LENGTH[6], ENUM_CODE_LENGTH[7],

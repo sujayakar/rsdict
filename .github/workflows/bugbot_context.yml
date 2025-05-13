@@ -1,0 +1,13 @@
+name: Generate BugBot Context
+
+on:
+  pull_request:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run BugBot Context
+        uses: anysphere/bugbot-context@v0.0.5
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}

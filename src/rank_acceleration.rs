@@ -35,10 +35,15 @@ mod accelerated {
     // * class_sum: classes[start..end].sum()
     // * length_sum: classes[start.end].map(|i| ENUM_CODE_LENGTH[i]).sum()
     pub fn scan_block(classes: &[u8], start: usize, end: usize) -> (u64, u64) {
-        if is_x86_feature_detected!("avx512bw") {
-            // SAFETY: The function is only called when the CPUID bit is present.
-            unsafe { scan_block_avx512(classes, start, end) }
-        } else if is_x86_feature_detected!("ssse3") {
+        #[cfg(feature = "avx512")]
+        {
+            if is_x86_feature_detected!("avx512bw") {
+                // SAFETY: The function is only called when the CPUID bit is present.
+                return unsafe { scan_block_avx512(classes, start, end) };
+            }
+        }
+
+        if is_x86_feature_detected!("ssse3") {
             unsafe { scan_block_ssse3(classes, start, end) }
         } else {
             scan_block_naive(classes, start, end)
@@ -115,6 +120,7 @@ mod accelerated {
 
     // --- New AVX512 implementation ------------------------------------------------
 
+    #[cfg(feature = "avx512")]
     #[target_feature(enable = "avx512bw,avx512f")]
     unsafe fn scan_block_avx512(classes: &[u8], start: usize, end: usize) -> (u64, u64) {
         use std::arch::x86_64::*;

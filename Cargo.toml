@@ -20,6 +20,7 @@ debug = true
 default = []
 fuzz = ["afl"]
 simd = []
+avx2 = []
 
 [dependencies.afl]
 version = "0.13.3"

@@ -18,10 +18,11 @@ mod accelerated {
     use super::scan_block_naive;
     use crate::enum_code::ENUM_CODE_LENGTH;
     use std::arch::x86_64::{__m128i, _mm_sad_epu8, _mm_setzero_si128};
-    use std::simd::{num::SimdUint, u64x2, u8x16, Simd};
+    use std::simd::{u64x2, u8x16, Simd};
     use std::simd::prelude::SimdOrd;
     use std::slice;
     use std::u64;
+    use std::simd::num::SimdUint;
 
     // Scan a prefix of a large block of small block classes, returning the
     // sum of the classes and their total encoded length.
@@ -34,7 +35,10 @@ mod accelerated {
     // * class_sum: classes[start..end].sum()
     // * length_sum: classes[start.end].map(|i| ENUM_CODE_LENGTH[i]).sum()
     pub fn scan_block(classes: &[u8], start: usize, end: usize) -> (u64, u64) {
-        if is_x86_feature_detected!("ssse3") {
+        if is_x86_feature_detected!("avx512bw") {
+            // SAFETY: The function is only called when the CPUID bit is present.
+            unsafe { scan_block_avx512(classes, start, end) }
+        } else if is_x86_feature_detected!("ssse3") {
             unsafe { scan_block_ssse3(classes, start, end) }
         } else {
             scan_block_naive(classes, start, end)
@@ -107,6 +111,45 @@ mod accelerated {
         let xs_m128: __m128i = __m128i::from(xs);
         let sum_m128 = _mm_sad_epu8(zero_m128, xs_m128);
         u64x2::from(sum_m128).reduce_sum()
+    }
+
+    // --- New AVX512 implementation ------------------------------------------------
+
+    #[target_feature(enable = "avx512bw,avx512f")]
+    unsafe fn scan_block_avx512(classes: &[u8], start: usize, end: usize) -> (u64, u64) {
+        use std::simd::{u8x64};
+        let len = end - start;
+        debug_assert!(len <= 64);
+
+        // Copy up to 64 bytes into a local buffer so we can create a u8x64. This
+        // avoids doing an unchecked 64-byte load that might cross a page boundary.
+        let mut buf = [0u8; 64];
+        if len > 0 {
+            buf[..len].copy_from_slice(&classes[start..end]);
+        }
+
+        // Load into a SIMD vector and mask off elements beyond `len` (already zero).
+        let class_vec = u8x64::from_array(buf);
+
+        // Compute indices for the packed lookup table: f(i) = min(i, 64 - i, 15).
+        let indices = class_vec.simd_min(u8x64::splat(64) - class_vec)
+                               .simd_min(u8x64::splat(15));
+
+        // Gather the encoded lengths using the indices.  We fall back to a scalar
+        // gather because `pshufb` only works on 128-bit and 256-bit lanes and there
+        // is no portable SIMD shuffle for 64-byte vectors yet.
+        let mut code_buf = [0u8; 64];
+        let indices_arr = indices.to_array();
+        for i in 0..len {
+            code_buf[i] = ENUM_CODE_LENGTH[indices_arr[i] as usize];
+        }
+        let code_vec = u8x64::from_array(code_buf);
+
+        // Sum the lanes.  We cast to u16 so that the addition cannot overflow.
+        let class_sum: u64 = class_vec.cast::<u16>().reduce_sum() as u64;
+        let length_sum: u64 = code_vec.cast::<u16>().reduce_sum() as u64;
+
+        (class_sum, length_sum)
     }
 }
 

@@ -43,6 +43,13 @@ mod accelerated {
             }
         }
 
+        #[cfg(feature = "avx2")]
+        {
+            if is_x86_feature_detected!("avx2") {
+                return unsafe { scan_block_avx2(classes, start, end) };
+            }
+        }
+
         if is_x86_feature_detected!("ssse3") {
             unsafe { scan_block_ssse3(classes, start, end) }
         } else {
@@ -187,6 +194,56 @@ mod accelerated {
 
         let class_sum: u64 = class_simd.cast::<u16>().reduce_sum() as u64;
         let length_sum:u64 = len_simd.cast::<u16>().reduce_sum() as u64;
+
+        (class_sum, length_sum)
+    }
+
+    // --- Optional AVX2 implementation (feature = "avx2") ----------------------
+
+    #[cfg(feature = "avx2")]
+    #[target_feature(enable = "avx2")]
+    unsafe fn scan_block_avx2(classes: &[u8], start: usize, end: usize) -> (u64, u64) {
+        use std::arch::x86_64::*;
+
+        let len = end - start;
+        debug_assert!(len <= 16);
+
+        // Load up to 16 bytes into lower half of a 256-bit register; upper half zeros.
+        let mut buf = [0u8; 32];
+        core::ptr::copy_nonoverlapping(classes.as_ptr().add(start), buf.as_mut_ptr(), len);
+        let class_vec = _mm256_loadu_si256(buf.as_ptr() as *const __m256i);
+
+        // indices = min(class, 64-class, 15)
+        let sixty_four = _mm256_set1_epi8(64u8 as i8);
+        let fifteen    = _mm256_set1_epi8(15u8 as i8);
+        let complement = _mm256_sub_epi8(sixty_four, class_vec);
+        let indices    = _mm256_min_epu8(_mm256_min_epu8(class_vec, complement), fifteen);
+
+        // 32-byte LUT: two copies of LUT16
+        const LUT32: [u8; 32] = [
+            ENUM_CODE_LENGTH[0],  ENUM_CODE_LENGTH[1],  ENUM_CODE_LENGTH[2],  ENUM_CODE_LENGTH[3],
+            ENUM_CODE_LENGTH[4],  ENUM_CODE_LENGTH[5],  ENUM_CODE_LENGTH[6],  ENUM_CODE_LENGTH[7],
+            ENUM_CODE_LENGTH[8],  ENUM_CODE_LENGTH[9],  ENUM_CODE_LENGTH[10], ENUM_CODE_LENGTH[11],
+            ENUM_CODE_LENGTH[12], ENUM_CODE_LENGTH[13], ENUM_CODE_LENGTH[14], ENUM_CODE_LENGTH[15],
+            ENUM_CODE_LENGTH[0],  ENUM_CODE_LENGTH[1],  ENUM_CODE_LENGTH[2],  ENUM_CODE_LENGTH[3],
+            ENUM_CODE_LENGTH[4],  ENUM_CODE_LENGTH[5],  ENUM_CODE_LENGTH[6],  ENUM_CODE_LENGTH[7],
+            ENUM_CODE_LENGTH[8],  ENUM_CODE_LENGTH[9],  ENUM_CODE_LENGTH[10], ENUM_CODE_LENGTH[11],
+            ENUM_CODE_LENGTH[12], ENUM_CODE_LENGTH[13], ENUM_CODE_LENGTH[14], ENUM_CODE_LENGTH[15],
+        ];
+
+        let lut = _mm256_loadu_si256(LUT32.as_ptr() as *const __m256i);
+        let code_lengths = _mm256_shuffle_epi8(lut, indices);
+
+        // Sum half-lanes with psadbw (sad_epu8) using two 128-bit sums.
+        let zero = _mm256_setzero_si256();
+        let sad   = _mm256_sad_epu8(class_vec, zero); // Each 128 lane sums
+        let sad2  = _mm256_sad_epu8(code_lengths, zero);
+
+        // Extract sums.
+        let sums_class: [u64;4] = core::mem::transmute(sad);
+        let sums_len  : [u64;4] = core::mem::transmute(sad2);
+        let class_sum = sums_class[0] + sums_class[2];
+        let length_sum = sums_len[0] + sums_len[2];
 
         (class_sum, length_sum)
     }

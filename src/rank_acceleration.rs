@@ -117,37 +117,70 @@ mod accelerated {
 
     #[target_feature(enable = "avx512bw,avx512f")]
     unsafe fn scan_block_avx512(classes: &[u8], start: usize, end: usize) -> (u64, u64) {
+        use std::arch::x86_64::*;
         use std::simd::{u8x64};
+
         let len = end - start;
         debug_assert!(len <= 64);
 
-        // Copy up to 64 bytes into a local buffer so we can create a u8x64. This
-        // avoids doing an unchecked 64-byte load that might cross a page boundary.
-        let mut buf = [0u8; 64];
-        if len > 0 {
-            buf[..len].copy_from_slice(&classes[start..end]);
-        }
+        // ---------------------------------------------------------------------
+        // 1. Masked load of the class bytes into an __m512i.
+        // ---------------------------------------------------------------------
+        let ptr = classes.as_ptr().add(start) as *const i8;
+        // Create a __mmask64 with the lowest `len` bits set.
+        let mask: __mmask64 = if len == 64 {
+            !0u64 as u64
+        } else {
+            (1u64 << len) - 1
+        } as __mmask64;
 
-        // Load into a SIMD vector and mask off elements beyond `len` (already zero).
-        let class_vec = u8x64::from_array(buf);
+        let class_bytes: __m512i = _mm512_maskz_loadu_epi8(mask, ptr);
 
-        // Compute indices for the packed lookup table: f(i) = min(i, 64 - i, 15).
-        let indices = class_vec.simd_min(u8x64::splat(64) - class_vec)
-                               .simd_min(u8x64::splat(15));
+        // ---------------------------------------------------------------------
+        // 2. Compute indices = min(class, 64-class, 15).
+        // ---------------------------------------------------------------------
+        let sixty_four = _mm512_set1_epi8(64u8 as i8);
+        let fifteen    = _mm512_set1_epi8(15u8 as i8);
 
-        // Gather the encoded lengths using the indices.  We fall back to a scalar
-        // gather because `pshufb` only works on 128-bit and 256-bit lanes and there
-        // is no portable SIMD shuffle for 64-byte vectors yet.
-        let mut code_buf = [0u8; 64];
-        let indices_arr = indices.to_array();
-        for i in 0..len {
-            code_buf[i] = ENUM_CODE_LENGTH[indices_arr[i] as usize];
-        }
-        let code_vec = u8x64::from_array(code_buf);
+        let complement = _mm512_sub_epi8(sixty_four, class_bytes);
+        let indices    = _mm512_min_epu8(
+            _mm512_min_epu8(class_bytes, complement),
+            fifteen,
+        );
 
-        // Sum the lanes.  We cast to u16 so that the addition cannot overflow.
-        let class_sum: u64 = class_vec.cast::<u16>().reduce_sum() as u64;
-        let length_sum: u64 = code_vec.cast::<u16>().reduce_sum() as u64;
+        // ---------------------------------------------------------------------
+        // 3. Lookup ENUM_CODE_LENGTH via vpshufb (shuffle).
+        //    Build a 512-bit LUT with the 16-byte table repeated 4× (one per 128-lane).
+        // ---------------------------------------------------------------------
+        const LUT16: [u8; 16] = [
+            ENUM_CODE_LENGTH[0],  ENUM_CODE_LENGTH[1],  ENUM_CODE_LENGTH[2],  ENUM_CODE_LENGTH[3],
+            ENUM_CODE_LENGTH[4],  ENUM_CODE_LENGTH[5],  ENUM_CODE_LENGTH[6],  ENUM_CODE_LENGTH[7],
+            ENUM_CODE_LENGTH[8],  ENUM_CODE_LENGTH[9],  ENUM_CODE_LENGTH[10], ENUM_CODE_LENGTH[11],
+            ENUM_CODE_LENGTH[12], ENUM_CODE_LENGTH[13], ENUM_CODE_LENGTH[14], ENUM_CODE_LENGTH[15],
+        ];
+
+        let lut_bytes: [u8; 64] = [
+            LUT16[0],  LUT16[1],  LUT16[2],  LUT16[3],  LUT16[4],  LUT16[5],  LUT16[6],  LUT16[7],
+            LUT16[8],  LUT16[9],  LUT16[10], LUT16[11], LUT16[12], LUT16[13], LUT16[14], LUT16[15],
+            LUT16[0],  LUT16[1],  LUT16[2],  LUT16[3],  LUT16[4],  LUT16[5],  LUT16[6],  LUT16[7],
+            LUT16[8],  LUT16[9],  LUT16[10], LUT16[11], LUT16[12], LUT16[13], LUT16[14], LUT16[15],
+            LUT16[0],  LUT16[1],  LUT16[2],  LUT16[3],  LUT16[4],  LUT16[5],  LUT16[6],  LUT16[7],
+            LUT16[8],  LUT16[9],  LUT16[10], LUT16[11], LUT16[12], LUT16[13], LUT16[14], LUT16[15],
+            LUT16[0],  LUT16[1],  LUT16[2],  LUT16[3],  LUT16[4],  LUT16[5],  LUT16[6],  LUT16[7],
+            LUT16[8],  LUT16[9],  LUT16[10], LUT16[11], LUT16[12], LUT16[13], LUT16[14], LUT16[15],
+        ];
+
+        let lut_vec: __m512i = _mm512_loadu_si512(lut_bytes.as_ptr() as *const _);
+        let code_lengths: __m512i = _mm512_shuffle_epi8(lut_vec, indices);
+
+        // ---------------------------------------------------------------------
+        // 4. Convert to portable-simd vectors and reduce to u64 sums.
+        // ---------------------------------------------------------------------
+        let class_simd: u8x64  = core::mem::transmute(class_bytes);
+        let len_simd:   u8x64  = core::mem::transmute(code_lengths);
+
+        let class_sum: u64 = class_simd.cast::<u16>().reduce_sum() as u64;
+        let length_sum:u64 = len_simd.cast::<u16>().reduce_sum() as u64;
 
         (class_sum, length_sum)
     }

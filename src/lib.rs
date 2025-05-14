@@ -47,7 +47,7 @@
 //! over as many small blocks as possible, and then select within a small
 //! block. As with rank, we're able to select within a small block directly.
 
-#![cfg_attr(feature = "simd", feature(portable_simd, avx512_target_feature))]
+#![cfg_attr(feature = "simd", feature(portable_simd, avx512_target_feature, stdarch_x86_avx512))]
 
 #[cfg(test)]
 extern crate quickcheck;

@@ -133,7 +133,7 @@ mod accelerated_neon {
     // * class_sum: classes[start..end].sum()
     // * length_sum: classes[start.end].map(|i| ENUM_CODE_LENGTH[i]).sum()
     pub fn scan_block(classes: &[u8], start: usize, end: usize) -> (u64, u64) {
-        if is_aarch64_feature_detected!("neon") {
+        if std::arch::is_aarch64_feature_detected!("neon") {
             unsafe { scan_block_neon(classes, start, end) }
         } else {
             scan_block_naive(classes, start, end)

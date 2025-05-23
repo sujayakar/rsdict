@@ -6,7 +6,7 @@ description = "Fast static rank and select data structure"
 repository = "https://github.com/sujayakar/rsdict"
 homepage = "https://github.com/sujayakar/rsdict"
 readme = "README.md"
-license = "MIT/Apache-2.0"
+license = "MIT OR Apache-2.0"
 keywords = ["rank", "select", "succinct"]
 categories = ["data-structures"]
 edition = "2018"
@@ -26,12 +26,11 @@ version = "0.13.3"
 optional = true
 
 [dev-dependencies]
-quickcheck = "1.0.3"
-quickcheck_macros = "1.0.0"
-criterion = "0.5"
+quickcheck = "1"
+quickcheck_macros = "1"
+succinct = "0.5"
+criterion = { version = "0.5", features = ["html_reports"] }
 rand = "0.8"
-succinct = "0.5.2"
-proptest = "1"
 
 [[bench]]
 name = "rank_select"

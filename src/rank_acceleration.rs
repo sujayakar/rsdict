@@ -117,7 +117,7 @@ mod accelerated {
 mod accelerated_neon {
     use super::scan_block_naive;
     use crate::enum_code::ENUM_CODE_LENGTH;
-    use std::simd::{num::SimdUint, u64x2, u8x16, Simd};
+    use std::simd::{u64x2, u8x16, Simd};
     use std::simd::prelude::SimdOrd;
     use std::slice;
     use std::u64;
@@ -217,3 +217,121 @@ pub use self::accelerated::scan_block;
 
 #[cfg(all(feature = "simd", target_arch = "aarch64"))]
 pub use self::accelerated_neon::scan_block;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scan_block_naive() {
+        let classes = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+        let (class_sum, length_sum) = scan_block_naive(&classes, 0, 16);
+        assert_eq!(class_sum, 120); // sum of 0..16
+        let expected_length_sum: u64 = classes
+            .iter()
+            .map(|&c| ENUM_CODE_LENGTH[c as usize] as u64)
+            .sum();
+        assert_eq!(length_sum, expected_length_sum);
+    }
+
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    #[test]
+    fn test_ssse3_scan_block() {
+        if !is_x86_feature_detected!("ssse3") {
+            println!("SSSE3 not available, skipping test");
+            return;
+        }
+
+        // Create aligned buffer
+        let mut aligned_classes = vec![0u8; 32];
+        for i in 0..16 {
+            aligned_classes[i] = i as u8;
+        }
+
+        let (naive_class, naive_length) = scan_block_naive(&aligned_classes, 0, 16);
+        let (simd_class, simd_length) = scan_block(&aligned_classes, 0, 16);
+        
+        assert_eq!(naive_class, simd_class);
+        assert_eq!(naive_length, simd_length);
+    }
+
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    #[test]
+    fn test_neon_scan_block() {
+        if !std::arch::is_aarch64_feature_detected!("neon") {
+            println!("NEON not available, skipping test");
+            return;
+        }
+
+        // Create aligned buffer
+        let mut aligned_classes = vec![0u8; 32];
+        for i in 0..16 {
+            aligned_classes[i] = i as u8;
+        }
+
+        let (naive_class, naive_length) = scan_block_naive(&aligned_classes, 0, 16);
+        let (neon_class, neon_length) = scan_block(&aligned_classes, 0, 16);
+        
+        assert_eq!(naive_class, neon_class);
+        assert_eq!(naive_length, neon_length);
+    }
+
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    #[test]
+    fn test_neon_various_sizes() {
+        if !std::arch::is_aarch64_feature_detected!("neon") {
+            return;
+        }
+
+        let mut aligned_classes = vec![0u8; 32];
+        
+        // Test different patterns
+        for pattern in 0..4 {
+            for i in 0..16 {
+                aligned_classes[i] = match pattern {
+                    0 => i as u8,          // Sequential
+                    1 => (i % 3) as u8,    // Repeating pattern
+                    2 => 15 - i as u8,     // Reverse
+                    _ => (i * 2 % 16) as u8, // Scattered
+                };
+            }
+
+            // Test all valid size ranges
+            for size in 1..=16 {
+                let (naive_class, naive_length) = scan_block_naive(&aligned_classes, 0, size);
+                let (neon_class, neon_length) = scan_block(&aligned_classes, 0, size);
+                
+                assert_eq!(
+                    naive_class, neon_class,
+                    "Class sum mismatch for pattern {} size {}",
+                    pattern, size
+                );
+                assert_eq!(
+                    naive_length, neon_length,
+                    "Length sum mismatch for pattern {} size {}",
+                    pattern, size
+                );
+            }
+        }
+    }
+
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    #[test]
+    fn test_neon_edge_cases() {
+        if !std::arch::is_aarch64_feature_detected!("neon") {
+            return;
+        }
+
+        // Test with all zeros
+        let zeros = vec![0u8; 32];
+        let (class_sum, length_sum) = scan_block(&zeros, 0, 16);
+        assert_eq!(class_sum, 0);
+        assert_eq!(length_sum, 16 * ENUM_CODE_LENGTH[0] as u64);
+
+        // Test with all max values
+        let mut maxes = vec![15u8; 32];
+        let (class_sum, length_sum) = scan_block(&maxes, 0, 16);
+        assert_eq!(class_sum, 15 * 16);
+        assert_eq!(length_sum, 16 * ENUM_CODE_LENGTH[15] as u64);
+    }
+}

@@ -48,7 +48,6 @@
 //! block. As with rank, we're able to select within a small block directly.
 
 #![cfg_attr(feature = "simd", feature(portable_simd))]
-#![cfg_attr(all(feature = "simd", target_arch = "x86_64"), feature(stdarch_x86_avx512))]
 
 #[cfg(test)]
 extern crate quickcheck;
@@ -63,9 +62,6 @@ mod constants;
 mod enum_code;
 
 mod rank_acceleration;
-
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
-pub mod avx512_rsdict;
 
 #[cfg(test)]
 mod test_helpers;

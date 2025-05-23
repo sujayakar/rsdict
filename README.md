@@ -30,6 +30,11 @@ With the nightly-only `simd` feature and a CPU with SSSE3 support, the final ste
 in a few steps without any loops. Turning this feature on improves the `rsdict::rank` benchmark by
 about 40% on my computer. See `rank_acceleration.rs` for more details.
 
+### NEON acceleration for rank
+With the nightly-only `simd` feature on AArch64 (ARM64) architectures with NEON support, rank operations
+are accelerated using SIMD instructions. This provides similar performance benefits to SSE on x86_64.
+NEON is available on most modern ARM processors including Apple Silicon, ARM Cortex-A series, and others.
+
 ### Optimized routines for rank and select within a `u64`
 With a CPU that supports `popcnt`, computing rank within a small block of 64 bits will use this
 instruction to efficiently count the number of bits set.  Select uses an adapted version of an [an

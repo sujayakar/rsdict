@@ -31,6 +31,7 @@ quickcheck_macros = "1.0.0"
 criterion = "0.5"
 rand = "0.8"
 succinct = "0.5.2"
+proptest = "1"
 
 [[bench]]
 name = "rank_select"

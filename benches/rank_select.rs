@@ -1,112 +1,104 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::prelude::*;
 use rsdict::RsDict;
-use succinct::bit_vec::{BitVecPush, BitVector};
-use succinct::rank::{JacobsonRank, Rank9, RankSupport};
-use succinct::select::{BinSearchSelect, Select0Support, Select1Support};
 
-const NUM_BITS: usize = 1_000_000;
-const SEED: u64 = 88004802264174740;
+fn prepare_rsdict(_density: f32) -> RsDict {
+    let mut rng = StdRng::seed_from_u64(0xFEE5EED);
+    let blocks = std::iter::repeat_with(|| rng.gen()).take(100_000);
+    let dict = RsDict::from_blocks(blocks);
+    return dict;
+}
 
-fn random_bits(len: usize) -> BitVector<u64> {
-    let mut rng = StdRng::seed_from_u64(SEED);
-    let mut bv = BitVector::with_capacity(len as u64);
-    for _ in 0..len {
-        bv.push_bit(rng.gen());
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+fn prepare_avx512_rsdict() -> Option<rsdict::avx512_rsdict::Avx512RsDict> {
+    if !is_x86_feature_detected!("avx512f") || !is_x86_feature_detected!("avx512vpopcntdq") {
+        return None;
     }
-    bv
+    
+    let mut dict = rsdict::avx512_rsdict::Avx512RsDict::with_capacity(100_000 * 64);
+    let mut rng = StdRng::seed_from_u64(0xFEE5EED);
+    
+    for _ in 0..100_000 {
+        let block = rng.gen::<u64>();
+        for i in 0..64 {
+            dict.push((block >> i) & 1 == 1);
+        }
+    }
+    dict.finalize();
+    
+    Some(dict)
 }
 
-fn random_indices(count: usize, range: usize) -> Vec<usize> {
-    let mut rng = StdRng::seed_from_u64(SEED);
-    (0..count).map(|_| rng.gen_range(0..range)).collect()
+#[cfg(not(all(target_arch = "x86_64", feature = "simd")))]
+fn prepare_avx512_rsdict() -> Option<()> {
+    None
 }
 
-fn bench_one_rank<T, F, G>(c: &mut Criterion, name: &str, create: F, rank: G)
-where
-    F: FnOnce(BitVector<u64>) -> T,
-    G: Fn(&T, u64) -> u64,
-{
-    let r = create(random_bits(NUM_BITS));
-    let indices = random_indices(1000, NUM_BITS);
-    c.bench_function(name, |b| {
+fn rank_select_benchmark(c: &mut Criterion) {
+    // Standard benchmarks
+    c.bench_function("rsdict::rank", |b| {
+        let dict = prepare_rsdict(0.5);
+        let mut i = 0u64;
         b.iter(|| {
-            for &ix in &indices {
-                rank(&r, black_box(ix as u64));
-            }
-        })
+            i = (i + 1111) % dict.len() as u64;
+            dict.rank(black_box(i), true)
+        });
     });
-}
 
-fn bench_rank(c: &mut Criterion) {
-    bench_one_rank(
-        c,
-        "rsdict::rank",
-        |bits| {
-            let mut rs_dict = RsDict::with_capacity(NUM_BITS);
-            for b in bits.iter() {
-                rs_dict.push(b);
-            }
-            rs_dict
-        },
-        |r, i| r.rank(i, true),
-    );
-    bench_one_rank(c, "jacobson::rank", JacobsonRank::new, |r, i| {
-        r.rank(i, true)
-    });
-    bench_one_rank(c, "rank9::rank", Rank9::new, |r, i| r.rank(i, true));
-}
-
-fn bench_one_select<T, F, G, H>(c: &mut Criterion, name: &str, create: F, select0: G, select1: H)
-where
-    F: Fn(BitVector<u64>) -> T,
-    G: Fn(&T, u64) -> Option<u64>,
-    H: Fn(&T, u64) -> Option<u64>,
-{
-    let bits = random_bits(NUM_BITS);
-    let num_set = bits.iter().filter(|&b| b).count();
-    let r = create(bits);
-    let indices = random_indices(1000, num_set);
-
-    c.bench_function(&format!("{}::select0", name), |b| {
+    c.bench_function("rsdict::select", |b| {
+        let dict = prepare_rsdict(0.5);
+        let max_rank = dict.rank(dict.len() as u64 - 1, true);
+        let mut i = 0u64;
         b.iter(|| {
-            for &ix in &indices {
-                select0(&r, black_box(ix as u64));
-            }
-        })
+            i = (i + 97) % max_rank.max(1);
+            dict.select(black_box(i), true).unwrap()
+        });
     });
-    c.bench_function(&format!("{}::select1", name), |b| {
+
+    c.bench_function("rank_acceleration::rank", |b| {
+        let dict = prepare_rsdict(0.5);
+        let mut i = 0u64;
         b.iter(|| {
-            for &ix in &indices {
-                select1(&r, black_box(ix as u64));
-            }
-        })
+            i = (i + 1111) % dict.len() as u64;
+            dict.rank(black_box(i), true)
+        });
     });
+
+    c.bench_function("rank_acceleration::select", |b| {
+        let dict = prepare_rsdict(0.5);
+        let max_rank = dict.rank(dict.len() as u64 - 1, true);
+        let mut i = 0u64;
+        b.iter(|| {
+            i = (i + 97) % max_rank.max(1);
+            dict.select(black_box(i), true).unwrap()
+        });
+    });
+    
+    // AVX-512 benchmarks if available
+    #[cfg(all(target_arch = "x86_64", feature = "simd"))]
+    {
+        if let Some(dict) = prepare_avx512_rsdict() {
+            c.bench_function("avx512::rank", |b| {
+                let mut i = 0usize;
+                b.iter(|| {
+                    i = (i + 1111) % dict.len();
+                    dict.rank(black_box(i), true)
+                });
+            });
+
+            c.bench_function("avx512::select", |b| {
+                let max_rank = dict.rank(dict.len() - 1, true);
+                let mut i = 0u64;
+                b.iter(|| {
+                    i = (i + 97) % max_rank.max(1);
+                    dict.select(black_box(i), true).unwrap()
+                });
+            });
+        } else {
+            println!("AVX-512 not available on this CPU, skipping AVX-512 benchmarks");
+        }
+    }
 }
 
-fn bench_select(c: &mut Criterion) {
-    bench_one_select(
-        c,
-        "rsdict",
-        |bits| {
-            let mut rs_dict = RsDict::with_capacity(NUM_BITS);
-            for b in bits.iter() {
-                rs_dict.push(b);
-            }
-            rs_dict
-        },
-        |r, i| r.select0(i),
-        |r, i| r.select1(i),
-    );
-    bench_one_select(
-        c,
-        "rank9::binsearch",
-        |b| BinSearchSelect::new(Rank9::new(b)),
-        |r, i| r.select0(i),
-        |r, i| r.select1(i),
-    );
-}
-
-criterion_group!(benches, bench_rank, bench_select);
+criterion_group!(benches, rank_select_benchmark);
 criterion_main!(benches);
